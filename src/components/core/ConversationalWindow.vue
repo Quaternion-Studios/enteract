@@ -115,8 +115,10 @@ const {
   suggestions: liveAISuggestions,
   isProcessing: liveAIIsProcessing,
   error: liveAIError,
+  isModelPreloaded: isLiveAIModelPreloaded,
   startLiveAI,
   stopLiveAI,
+  preloadModel: preloadLiveAIModel,
   onConversationChange
 } = useLiveAI()
 
@@ -218,6 +220,9 @@ onMounted(async () => {
     // Load existing conversations
     console.log('📁 ConversationalWindow: Loading conversations on mount')
     await loadConversations()
+    
+    // Pre-load Live AI model for faster responses
+    await preloadLiveAIModel()
     
   } catch (error) {
     console.error('Failed to initialize conversational window:', error)
@@ -608,6 +613,7 @@ const formatSessionDuration = () => {
           :response="liveAIResponse"
           :suggestions="liveAISuggestions"
           :error="liveAIError"
+          :is-model-preloaded="isLiveAIModelPreloaded"
           @close="showLiveAI = false"
           @toggle-live="toggleLiveAIActive"
         />

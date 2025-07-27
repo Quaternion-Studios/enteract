@@ -104,8 +104,8 @@ const generalSettings = ref({
   enableAutoSave: true,
   autoSaveInterval: 5,
   // Whisper model settings
-  microphoneWhisperModel: 'base',
-  loopbackWhisperModel: 'base',
+  microphoneWhisperModel: 'tiny',
+  loopbackWhisperModel: 'tiny',
   // GPU acceleration settings
   enableGpuAcceleration: true,
   // Transparency settings
@@ -371,13 +371,13 @@ watch(generalSettings, (newSettings, oldSettings) => {
   
   // Validate model selections
   if (!availableModels.value.microphone.includes(newSettings.microphoneWhisperModel)) {
-    console.warn('⚠️ [FRONTEND] Invalid microphone model selected, resetting to base')
-    newSettings.microphoneWhisperModel = 'base'
+    console.warn('⚠️ [FRONTEND] Invalid microphone model selected, resetting to tiny')
+    newSettings.microphoneWhisperModel = 'tiny'
   }
   
   if (!availableModels.value.loopback.includes(newSettings.loopbackWhisperModel)) {
-    console.warn('⚠️ [FRONTEND] Invalid loopback model selected, resetting to base')
-    newSettings.loopbackWhisperModel = 'base'
+    console.warn('⚠️ [FRONTEND] Invalid loopback model selected, resetting to tiny')
+    newSettings.loopbackWhisperModel = 'tiny'
   }
   
   // Check if whisper model settings changed and emit event for reinitialization
@@ -425,14 +425,14 @@ watch(generalSettings, (newSettings, oldSettings) => {
 watch(availableModels, (newModels) => {
   // Validate current microphone model selection
   if (!newModels.microphone.includes(generalSettings.value.microphoneWhisperModel)) {
-    console.warn('⚠️ Current microphone model not available, resetting to base')
-    generalSettings.value.microphoneWhisperModel = 'base'
+    console.warn('⚠️ Current microphone model not available, resetting to tiny')
+    generalSettings.value.microphoneWhisperModel = 'tiny'
   }
   
   // Validate current loopback model selection
   if (!newModels.loopback.includes(generalSettings.value.loopbackWhisperModel)) {
-    console.warn('⚠️ Current loopback model not available, resetting to base')
-    generalSettings.value.loopbackWhisperModel = 'base'
+    console.warn('⚠️ Current loopback model not available, resetting to tiny')
+    generalSettings.value.loopbackWhisperModel = 'tiny'
   }
 }, { deep: true })
 

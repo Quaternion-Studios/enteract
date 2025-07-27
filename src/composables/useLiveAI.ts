@@ -30,11 +30,13 @@ export function useLiveAI() {
   const suggestions = ref<SuggestionItem[]>([])
   const isProcessing = ref(false)
   const error = ref<string | null>(null)
+  const isModelPreloaded = ref(false)
   let streamListener: any = null
   let analysisTimeout: number | null = null
   let lastAnalysisTime = 0
   const ANALYSIS_DEBOUNCE_MS = 3000 // Wait 3 seconds after last message before analyzing
   const MIN_ANALYSIS_INTERVAL_MS = 5000 // Minimum 5 seconds between analyses
+  const SUGGESTION_DISPLAY_TIME = 5000 // 5 seconds minimum display time per suggestion
 
   const startLiveAI = async (messages: any[]): Promise<void> => {
     try {
@@ -73,6 +75,11 @@ export function useLiveAI() {
             if (suggestions.value.length > 5) {
               suggestions.value = suggestions.value.slice(0, 5)
             }
+            
+            // Schedule removal of old suggestions after display time
+            setTimeout(() => {
+              removeSuggestion(suggestion.id)
+            }, SUGGESTION_DISPLAY_TIME)
           }
         } else if (data.type === 'error') {
           console.error('❌ Live AI streaming error:', data.error)
@@ -213,6 +220,30 @@ export function useLiveAI() {
     }, ANALYSIS_DEBOUNCE_MS)
   }
 
+  const preloadModel = async (): Promise<void> => {
+    if (isModelPreloaded.value) return
+    
+    try {
+      console.log('🔄 Pre-loading gemma3 model for Live AI...')
+      await invoke('preload_ollama_model', {
+        model: 'gemma3:1b-it-qat'
+      })
+      isModelPreloaded.value = true
+      console.log('✅ gemma3 model pre-loaded successfully')
+    } catch (err) {
+      console.error('❌ Failed to pre-load gemma3 model:', err)
+      error.value = err instanceof Error ? err.message : 'Failed to pre-load model'
+    }
+  }
+  
+  const removeSuggestion = (suggestionId: string) => {
+    const index = suggestions.value.findIndex(s => s.id === suggestionId)
+    if (index > -1) {
+      suggestions.value.splice(index, 1)
+      console.log(`🗑️ Removed suggestion ${suggestionId} after display time`)
+    }
+  }
+  
   const reset = () => {
     if (streamListener) {
       streamListener()
@@ -238,8 +269,10 @@ export function useLiveAI() {
     suggestions,
     isProcessing,
     error,
+    isModelPreloaded,
     startLiveAI,
     stopLiveAI,
+    preloadModel,
     analyzeConversationContext,
     onSystemSpeaking,
     onConversationChange,

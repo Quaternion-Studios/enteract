@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, nextTick, watch } from 'vue'
-import { ChatBubbleLeftRightIcon } from '@heroicons/vue/24/outline'
+import { ChatBubbleLeftRightIcon, ChevronDownIcon } from '@heroicons/vue/24/outline'
 import MessageItem from './MessageItem.vue'
 
 interface Message {
@@ -94,12 +94,22 @@ defineExpose({
         @toggle-selection="handleToggleSelection"
       />
     </div>
+    
+    <!-- Scroll to bottom button -->
+    <button 
+      v-if="isUserScrolled" 
+      @click="scrollToBottom"
+      class="scroll-to-bottom-btn"
+      title="Scroll to bottom"
+    >
+      <ChevronDownIcon class="w-4 h-4" />
+    </button>
   </div>
 </template>
 
 <style scoped>
 .messages-container {
-  @apply flex-1 overflow-y-auto overflow-x-hidden;
+  @apply flex-1 overflow-y-auto overflow-x-hidden relative;
   scroll-behavior: smooth;
 }
 
@@ -132,5 +142,17 @@ defineExpose({
 
 .messages-container::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.3);
+}
+
+/* Scroll to bottom button */
+.scroll-to-bottom-btn {
+  @apply absolute bottom-4 right-4 z-10;
+  @apply w-10 h-10 rounded-full;
+  @apply bg-blue-500/80 hover:bg-blue-500;
+  @apply text-white shadow-lg;
+  @apply flex items-center justify-center;
+  @apply transition-all duration-200;
+  @apply hover:scale-105 active:scale-95;
+  backdrop-filter: blur(8px);
 }
 </style>

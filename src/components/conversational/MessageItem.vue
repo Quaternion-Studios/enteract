@@ -110,7 +110,7 @@ const handleClick = (messageId: string) => {
 }
 
 .message-bubble {
-  @apply rounded-2xl px-4 py-3 max-w-[85%] shadow-lg backdrop-blur-sm;
+  @apply rounded-2xl px-4 py-3 w-full shadow-lg backdrop-blur-sm;
   animation: messageSlideIn 0.3s ease-out;
 }
 
