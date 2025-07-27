@@ -120,17 +120,25 @@ export function useSpeechTranscription() {
       let selectedModel = defaultWhisperConfig.modelSize
       let enableGpu = true
       try {
+        console.log('🔍 [SPEECH_INIT] Loading general settings...')
         const storedSettings = await invoke<any>('load_general_settings')
+        console.log('🔍 [SPEECH_INIT] Stored settings:', storedSettings)
+        
         if (storedSettings?.microphoneWhisperModel) {
           selectedModel = storedSettings.microphoneWhisperModel
-          console.log(`🎤 Using stored microphone Whisper model: ${selectedModel}`)
+          console.log(`🎤 [SPEECH_INIT] Using stored microphone Whisper model: ${selectedModel}`)
+        } else {
+          console.log(`🎤 [SPEECH_INIT] No stored microphone model, using default: ${selectedModel}`)
         }
+        
         if (storedSettings?.enableGpuAcceleration !== undefined) {
           enableGpu = storedSettings.enableGpuAcceleration
-          console.log(`🎮 GPU acceleration: ${enableGpu ? 'enabled' : 'disabled'}`)
+          console.log(`🎮 [SPEECH_INIT] GPU acceleration: ${enableGpu ? 'enabled' : 'disabled'}`)
+        } else {
+          console.log(`🎮 [SPEECH_INIT] No GPU setting found, using default: ${enableGpu}`)
         }
       } catch (settingsError) {
-        console.warn('Failed to load model settings, using default:', settingsError)
+        console.warn('❌ [SPEECH_INIT] Failed to load model settings, using default:', settingsError)
       }
 
       // Initialize Whisper model with selected model size
@@ -154,7 +162,16 @@ export function useSpeechTranscription() {
         }
 
         // Initialize the model with GPU support
-        await invoke<string>('initialize_whisper_model_with_gpu', {
+        console.log(`🚀 [SPEECH_INIT] Calling initialize_whisper_model_with_gpu with:`, {
+          modelSize: config.modelSize,
+          language: config.language,
+          enableVad: config.enableVAD,
+          silenceThreshold: config.silenceThreshold,
+          maxSegmentLength: config.maxSegmentLength,
+          useGpu: enableGpu
+        })
+        
+        const initResult = await invoke<string>('initialize_whisper_model_with_gpu', {
           config: {
             modelSize: config.modelSize,
             language: config.language,
@@ -164,6 +181,8 @@ export function useSpeechTranscription() {
           },
           useGpu: enableGpu
         })
+        
+        console.log(`✅ [SPEECH_INIT] Whisper initialization result:`, initResult)
 
         hasWhisperModel.value = true
       } catch (whisperError) {
@@ -1047,25 +1066,30 @@ export function useSpeechTranscription() {
   // Listen for whisper model changes from settings
   onMounted(() => {
     const handleWhisperModelChange = async (event: any) => {
-      console.log('🔄 Whisper models changed, reinitializing...', event.detail)
+      console.log('🔄 [SPEECH_TRANSCRIPTION] Whisper models changed event received:', event.detail)
       
       // Update the default config with new model
       if (event.detail.microphoneModel) {
+        console.log('🔄 [SPEECH_TRANSCRIPTION] Updating microphone model from', defaultWhisperConfig.modelSize, 'to', event.detail.microphoneModel)
         defaultWhisperConfig.modelSize = event.detail.microphoneModel
       }
       
       // Reinitialize with new settings
       try {
+        console.log('🔄 [SPEECH_TRANSCRIPTION] Reinitializing with new model:', defaultWhisperConfig.modelSize)
         await initialize()
+        console.log('✅ [SPEECH_TRANSCRIPTION] Reinitialization complete')
       } catch (error) {
-        console.error('Failed to reinitialize whisper:', error)
+        console.error('❌ [SPEECH_TRANSCRIPTION] Failed to reinitialize whisper:', error)
       }
     }
     
+    console.log('🎧 [SPEECH_TRANSCRIPTION] Setting up whisper-models-changed event listener')
     window.addEventListener('whisper-models-changed', handleWhisperModelChange)
     
     // Cleanup listener on unmount
     onUnmounted(() => {
+      console.log('🎧 [SPEECH_TRANSCRIPTION] Removing whisper-models-changed event listener')
       window.removeEventListener('whisper-models-changed', handleWhisperModelChange)
     })
   })

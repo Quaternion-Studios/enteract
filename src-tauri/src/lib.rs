@@ -26,7 +26,8 @@ use eye_tracking::{
 use speech::{
     initialize_whisper_model, initialize_whisper_model_with_gpu, transcribe_audio_base64, transcribe_audio_file,
     check_whisper_model_availability, download_whisper_model, list_available_models,
-    get_gpu_info, get_current_gpu_config, get_available_models_for_device, debug_gpu_capability_check
+    get_gpu_info, get_current_gpu_config, get_available_models_for_device, debug_gpu_capability_check,
+    reload_whisper_model_for_loopback
 };
 use ollama::{
     get_ollama_models, get_ollama_status, pull_ollama_model, delete_ollama_model,
@@ -112,6 +113,7 @@ pub fn run() {
             get_current_gpu_config,
             get_available_models_for_device,
             debug_gpu_capability_check,
+            reload_whisper_model_for_loopback,
             
             // Ollama AI
             get_ollama_models,

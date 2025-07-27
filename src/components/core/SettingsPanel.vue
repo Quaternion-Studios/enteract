@@ -126,6 +126,10 @@ const gpuInfo = ref<{
 } | null>(null)
 const isLoadingGpuInfo = ref(false)
 
+// Model loading state
+const isReloadingModel = ref(false)
+const modelReloadMessage = ref('')
+
 // Ollama GPU info state
 const ollamaGpuInfo = ref<{
   gpu_available: boolean
@@ -247,10 +251,33 @@ const saveAudioSettings = async () => {
 
 const saveGeneralSettings = async () => {
   try {
+    // Get current model before saving to detect changes
+    const currentModel = generalSettings.value.loopbackWhisperModel
+    
+    // Show loading state for model changes
+    if (currentModel === 'medium' || isReloadingModel.value) {
+      isReloadingModel.value = true
+      modelReloadMessage.value = `Loading ${currentModel} model...`
+    }
+    
     await invoke('save_general_settings', { settings: generalSettings.value })
     console.log('💾 General settings saved')
+    
+    // Clear loading state after successful save
+    setTimeout(() => {
+      isReloadingModel.value = false
+      modelReloadMessage.value = ''
+    }, 2000) // Show success message for 2 seconds
+    
   } catch (error) {
     console.error('Failed to save general settings:', error)
+    isReloadingModel.value = false
+    modelReloadMessage.value = 'Failed to load model'
+    
+    // Clear error message after 3 seconds
+    setTimeout(() => {
+      modelReloadMessage.value = ''
+    }, 3000)
   }
 }
 
@@ -316,21 +343,22 @@ watch(audioSettings, () => {
 
 // Watch general settings changes and auto-save
 watch(generalSettings, (newSettings, oldSettings) => {
-  console.log('🔧 General settings watcher triggered:', {
-    newLevel: newSettings.defaultTransparencyLevel,
-    oldLevel: oldSettings?.defaultTransparencyLevel,
-    newEnabled: newSettings.enableTransparency,
-    oldEnabled: oldSettings?.enableTransparency
+  console.log('🔧 [FRONTEND] General settings watcher triggered:', {
+    microphoneModel: newSettings.microphoneWhisperModel,
+    loopbackModel: newSettings.loopbackWhisperModel,
+    enableGpu: newSettings.enableGpuAcceleration,
+    oldMicrophoneModel: oldSettings?.microphoneWhisperModel,
+    oldLoopbackModel: oldSettings?.loopbackWhisperModel
   })
   
   // Validate model selections
   if (!availableModels.value.microphone.includes(newSettings.microphoneWhisperModel)) {
-    console.warn('⚠️ Invalid microphone model selected, resetting to tiny')
+    console.warn('⚠️ [FRONTEND] Invalid microphone model selected, resetting to tiny')
     newSettings.microphoneWhisperModel = 'tiny'
   }
   
   if (!availableModels.value.loopback.includes(newSettings.loopbackWhisperModel)) {
-    console.warn('⚠️ Invalid loopback model selected, resetting to small')
+    console.warn('⚠️ [FRONTEND] Invalid loopback model selected, resetting to small')
     newSettings.loopbackWhisperModel = 'small'
   }
   
@@ -340,7 +368,11 @@ watch(generalSettings, (newSettings, oldSettings) => {
     newSettings.loopbackWhisperModel !== oldSettings.loopbackWhisperModel ||
     newSettings.enableGpuAcceleration !== oldSettings.enableGpuAcceleration
   )) {
-    console.log('🔄 Whisper model settings changed, emitting reinitialize event')
+    console.log('🔄 [FRONTEND] Whisper model settings changed, emitting reinitialize event:', {
+      microphoneModel: newSettings.microphoneWhisperModel,
+      loopbackModel: newSettings.loopbackWhisperModel,
+      enableGpu: newSettings.enableGpuAcceleration
+    })
     
     // Emit custom event that speech transcription can listen to
     const reinitializeEvent = new CustomEvent('whisper-models-changed', {
@@ -363,6 +395,11 @@ watch(generalSettings, (newSettings, oldSettings) => {
   }
   
   // Auto-save all general settings changes
+  console.log('💾 [FRONTEND] Saving general settings:', {
+    microphoneWhisperModel: newSettings.microphoneWhisperModel,
+    loopbackWhisperModel: newSettings.loopbackWhisperModel,
+    enableGpuAcceleration: newSettings.enableGpuAcceleration
+  })
   saveGeneralSettings()
 }, { deep: true })
 
@@ -1049,6 +1086,14 @@ onMounted(() => {
                     Medium model requires capable GPU.
                   </span>
                 </p>
+                
+                <!-- Model loading feedback -->
+                <div v-if="isReloadingModel || modelReloadMessage" class="mt-2 p-2 rounded bg-blue-500/20 border border-blue-400/30">
+                  <div class="flex items-center gap-2">
+                    <div v-if="isReloadingModel" class="animate-spin h-4 w-4 border-2 border-blue-400 border-t-transparent rounded-full"></div>
+                    <span class="text-blue-300 text-sm">{{ modelReloadMessage || 'Reloading model...' }}</span>
+                  </div>
+                </div>
               </div>
               
               <!-- GPU Acceleration Settings -->
