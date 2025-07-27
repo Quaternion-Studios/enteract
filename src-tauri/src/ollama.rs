@@ -57,6 +57,15 @@ pub struct OllamaModelsResponse {
 pub struct OllamaStatus {
     pub status: String,
     pub version: Option<String>,
+    pub gpu_info: Option<GpuInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GpuInfo {
+    pub gpu_available: bool,
+    pub gpu_type: Option<String>,
+    pub gpu_memory: Option<u64>,
+    pub gpu_compute_capability: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -266,10 +275,12 @@ pub async fn get_ollama_status() -> Result<OllamaStatus, String> {
                     Ok(version_info) => Ok(OllamaStatus {
                         status: "running".to_string(),
                         version: version_info.get("version").cloned(),
+                        gpu_info: None,
                     }),
                     Err(_) => Ok(OllamaStatus {
                         status: "running".to_string(),
                         version: None,
+                        gpu_info: None,
                     }),
                 }
             } else {
@@ -279,6 +290,7 @@ pub async fn get_ollama_status() -> Result<OllamaStatus, String> {
         Err(_) => Ok(OllamaStatus {
             status: "not_running".to_string(),
             version: None,
+            gpu_info: None,
         }),
     }
 }
@@ -687,4 +699,67 @@ pub async fn get_ollama_model_info(model_name: String) -> Result<serde_json::Val
         }
         Err(e) => Err(format!("Failed to connect to Ollama: {}", e)),
     }
+}
+
+#[tauri::command]
+pub async fn get_ollama_gpu_info() -> Result<GpuInfo, String> {
+    // Try to get GPU info from nvidia-smi first (for NVIDIA GPUs)
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Ok(nvidia_output) = std::process::Command::new("nvidia-smi")
+            .arg("--query-gpu=gpu_name,memory.total")
+            .arg("--format=csv,noheader,nounits")
+            .output()
+        {
+            if nvidia_output.status.success() {
+                let output_str = String::from_utf8_lossy(&nvidia_output.stdout);
+                let parts: Vec<&str> = output_str.trim().split(',').collect();
+                if parts.len() >= 2 {
+                    return Ok(GpuInfo {
+                        gpu_available: true,
+                        gpu_type: Some("CUDA".to_string()),
+                        gpu_memory: parts[1].trim().parse::<u64>().ok().map(|mb| mb * 1024 * 1024), // Convert MB to bytes
+                        gpu_compute_capability: Some(parts[0].trim().to_string()),
+                    });
+                }
+            }
+        }
+    }
+    
+    // Check for Metal on macOS
+    #[cfg(target_os = "macos")]
+    {
+        return Ok(GpuInfo {
+            gpu_available: true,
+            gpu_type: Some("Metal".to_string()),
+            gpu_memory: None, // Metal doesn't expose memory in the same way
+            gpu_compute_capability: Some("Apple Silicon".to_string()),
+        });
+    }
+    
+    // No GPU detected
+    Ok(GpuInfo {
+        gpu_available: false,
+        gpu_type: None,
+        gpu_memory: None,
+        gpu_compute_capability: None,
+    })
+}
+
+#[tauri::command]
+pub async fn check_ollama_gpu_usage(model_name: String) -> Result<serde_json::Value, String> {
+    // Get model info to see if it's loaded in GPU
+    let model_info = get_ollama_model_info(model_name.clone()).await?;
+    let gpu_info = get_ollama_gpu_info().await?;
+    
+    // Ollama automatically uses GPU when available for compatible models
+    // We can infer GPU usage based on model size and available GPU
+    let response = serde_json::json!({
+        "model": model_name,
+        "gpu_info": gpu_info,
+        "gpu_layers": model_info.get("gpu_layers").cloned(),
+        "note": "Ollama automatically uses GPU acceleration when available"
+    });
+    
+    Ok(response)
 } 
