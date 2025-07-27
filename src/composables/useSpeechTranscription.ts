@@ -35,6 +35,7 @@ export function useSpeechTranscription() {
   const error = ref<string | null>(null)
   const autoSendToChat = ref(true) // Control whether to auto-send to main chat
   const continuousMode = ref(false) // Keep mic open during conversations
+  const isShuttingDown = ref(false) // Flag to prevent processing during shutdown
 
   // Audio recording
   let mediaRecorder: MediaRecorder | null = null
@@ -606,6 +607,7 @@ export function useSpeechTranscription() {
 
     try {
       error.value = null
+      isShuttingDown.value = false // Reset shutdown flag for new recording
       
       // Check microphone permission first
       const hasPermission = await requestMicrophonePermission()
@@ -679,8 +681,11 @@ export function useSpeechTranscription() {
         }
 
         mediaRecorder.onstop = async () => {
-          if (audioChunks.length > 0) {
+          if (audioChunks.length > 0 && !isShuttingDown.value) {
             await processAudioWithWhisper()
+          } else if (isShuttingDown.value) {
+            console.log('🛑 Skipping final audio processing - session is shutting down')
+            audioChunks = [] // Clear any remaining chunks
           }
         }
 
@@ -711,6 +716,9 @@ export function useSpeechTranscription() {
     if (!isRecording.value) return
 
     try {
+      // Set shutdown flag to prevent further processing
+      isShuttingDown.value = true
+      
       // Immediately reset recording state for responsive UX
       isRecording.value = false
       isTranscribing.value = false
@@ -784,6 +792,7 @@ export function useSpeechTranscription() {
     } finally {
       // Ensure processing state is reset even if there are errors
       isProcessing.value = false
+      isShuttingDown.value = false // Reset shutdown flag after cleanup
     }
   }
 
@@ -803,6 +812,13 @@ export function useSpeechTranscription() {
   async function processAudioWithWhisper() {
     if (audioChunks.length === 0) {
       console.log('⚠️ No audio chunks to process')
+      return
+    }
+
+    // Skip processing if we're shutting down
+    if (isShuttingDown.value) {
+      console.log('🛑 Skipping Whisper processing - session is shutting down')
+      audioChunks = [] // Clear chunks
       return
     }
 
@@ -841,9 +857,9 @@ export function useSpeechTranscription() {
             maxSegmentLength: defaultWhisperConfig.maxSegmentLength
           }
         }),
-        // Timeout after 15 seconds for small model (slower than tiny but more accurate)
+        // Timeout after 20 seconds for base model (slower than tiny but more accurate)
         new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error('Whisper processing timeout')), 15000)
+          setTimeout(() => reject(new Error('Whisper processing timeout')), 20000)
         )
       ])
 

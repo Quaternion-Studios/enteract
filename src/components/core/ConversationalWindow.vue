@@ -271,8 +271,18 @@ const stopAudioLoopbackCapture = async () => {
 // Microphone toggle
 const toggleMicrophone = async () => {
   if (isRecording.value) {
+    console.log('🛑 Stopping conversation - disabling all audio processing')
+    
+    // Stop microphone recording first
     await stopRecording()
+    
+    // Immediately stop loopback capture
     await stopAudioLoopbackCapture()
+    console.log('🔇 Audio loopback capture stopped')
+    
+    // Clean up loopback transcription listeners
+    cleanupLoopback()
+    console.log('🧹 Loopback transcription listeners cleaned up')
     
     if (conversationStore.currentSession) {
       // Get session ID before ending it
@@ -301,6 +311,9 @@ const toggleMicrophone = async () => {
     await startRecording()
     if (audioLoopbackDeviceId.value) {
       await startAudioLoopbackCapture()
+      // Re-setup loopback listeners for new conversation
+      setupLoopbackListeners(true)
+      console.log('🎧 Loopback transcription listeners re-enabled')
     }
   }
 }
