@@ -83,10 +83,10 @@ pub async fn save_general_settings(settings: HashMap<String, serde_json::Value>)
     if let Some(existing) = existing_settings {
         let old_model = existing.get("loopbackWhisperModel")
             .and_then(|v| v.as_str())
-            .unwrap_or("small");
+            .unwrap_or("tiny");
         let new_model = settings.get("loopbackWhisperModel")
             .and_then(|v| v.as_str())
-            .unwrap_or("small");
+            .unwrap_or("tiny");
         
         if old_model != new_model {
             println!("🔄 Loopback model changed from '{}' to '{}', reloading...", old_model, new_model);

@@ -272,9 +272,9 @@ export function useSpeechTranscription() {
         interimText.value = interim
         currentTranscript.value = finalText.value + (finalText.value ? ' ' : '') + interim
         
-        // Emit interim transcription event
+        // Emit interim transcription event with only the current interim text
         emitTranscriptionEvent('transcription-interim', {
-          text: currentTranscript.value,
+          text: interim,
           confidence: 0.5,
           timestamp: Date.now()
         })
@@ -315,6 +315,12 @@ export function useSpeechTranscription() {
       isListening.value = false
       
       if (isRecording.value && hasWebSpeechSupport.value) {
+        // Clear accumulated text on restart for fresh message
+        console.log('🔄 Clearing accumulated text for new speaking session')
+        finalText.value = ''
+        interimText.value = ''
+        currentTranscript.value = ''
+        
         // Implement retry logic with backoff
         setTimeout(() => {
           if (isRecording.value && recognition) {
