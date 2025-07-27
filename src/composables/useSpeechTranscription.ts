@@ -42,13 +42,22 @@ export function useSpeechTranscription() {
   let recognition: SpeechRecognition | null = null
   let audioStream: MediaStream | null = null
 
-  // Silence detection
+  // Silence detection and VAD
   let silenceTimer: number | null = null
   let audioContext: AudioContext | null = null
   let analyser: AnalyserNode | null = null
   let silenceThreshold = 0.01
-  let silenceDuration = 5000 // 5 seconds - more reasonable for natural speech patterns in conversational UI
+  let silenceDuration = 2000 // 2 seconds for faster response
   let lastAudioTime = 0
+  
+  // Streaming configuration
+  let isVoiceActive = false
+  let voiceChunks: Float32Array[] = []
+  let silenceFrameCount = 0
+  const VAD_THRESHOLD = 0.02 // Energy threshold for voice activity
+  const SILENCE_FRAMES_THRESHOLD = 30 // ~1 second at 30fps
+  const MAX_CHUNK_FRAMES = 150 // ~5 seconds max chunk size
+  let scriptProcessor: ScriptProcessorNode | null = null
 
   // Configuration
   const defaultWhisperConfig: WhisperConfig = {
@@ -109,11 +118,16 @@ export function useSpeechTranscription() {
 
       // Load settings to get the selected whisper model for microphone
       let selectedModel = defaultWhisperConfig.modelSize
+      let enableGpu = true
       try {
         const storedSettings = await invoke<any>('load_general_settings')
         if (storedSettings?.microphoneWhisperModel) {
           selectedModel = storedSettings.microphoneWhisperModel
           console.log(`🎤 Using stored microphone Whisper model: ${selectedModel}`)
+        }
+        if (storedSettings?.enableGpuAcceleration !== undefined) {
+          enableGpu = storedSettings.enableGpuAcceleration
+          console.log(`🎮 GPU acceleration: ${enableGpu ? 'enabled' : 'disabled'}`)
         }
       } catch (settingsError) {
         console.warn('Failed to load model settings, using default:', settingsError)
@@ -139,15 +153,16 @@ export function useSpeechTranscription() {
           })
         }
 
-        // Initialize the model
-        await invoke<string>('initialize_whisper_model', {
+        // Initialize the model with GPU support
+        await invoke<string>('initialize_whisper_model_with_gpu', {
           config: {
             modelSize: config.modelSize,
             language: config.language,
             enableVad: config.enableVAD,
             silenceThreshold: config.silenceThreshold,
             maxSegmentLength: config.maxSegmentLength
-          }
+          },
+          useGpu: enableGpu
         })
 
         hasWhisperModel.value = true
@@ -311,10 +326,10 @@ export function useSpeechTranscription() {
     window.dispatchEvent(event)
   }
 
-  // Silence detection setup
+  // Silence detection setup with streaming VAD
   function setupSilenceDetection(stream: MediaStream) {
     try {
-      audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+      audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 })
       const source = audioContext.createMediaStreamSource(stream)
       analyser = audioContext.createAnalyser()
       
@@ -324,6 +339,13 @@ export function useSpeechTranscription() {
       analyser.smoothingTimeConstant = 0.85
       
       source.connect(analyser)
+      
+      // Setup script processor for real-time audio processing
+      scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1)
+      scriptProcessor.onaudioprocess = handleAudioProcess
+      
+      source.connect(scriptProcessor)
+      scriptProcessor.connect(audioContext.destination)
       
       monitorAudioLevel()
     } catch (err) {
@@ -384,6 +406,165 @@ export function useSpeechTranscription() {
       clearTimeout(silenceTimer)
       silenceTimer = null
     }
+  }
+
+  // Calculate audio energy for VAD
+  function calculateAudioEnergy(buffer: Float32Array): number {
+    let sum = 0
+    for (let i = 0; i < buffer.length; i++) {
+      sum += buffer[i] * buffer[i]
+    }
+    return Math.sqrt(sum / buffer.length)
+  }
+
+  // Handle real-time audio processing with VAD
+  function handleAudioProcess(event: AudioProcessingEvent) {
+    if (!isRecording.value) return
+
+    const inputBuffer = event.inputBuffer.getChannelData(0)
+    const energy = calculateAudioEnergy(inputBuffer)
+    const isCurrentlyActive = energy > VAD_THRESHOLD
+
+    if (isCurrentlyActive) {
+      isVoiceActive = true
+      silenceFrameCount = 0
+      voiceChunks.push(new Float32Array(inputBuffer))
+    } else {
+      silenceFrameCount++
+
+      // If we have voice data and sufficient silence, process chunk
+      if (isVoiceActive && silenceFrameCount > SILENCE_FRAMES_THRESHOLD) {
+        processStreamingChunk(voiceChunks.splice(0))
+        isVoiceActive = false
+      }
+    }
+
+    // Prevent chunks from getting too large
+    if (voiceChunks.length > MAX_CHUNK_FRAMES) {
+      processStreamingChunk(voiceChunks.splice(0, voiceChunks.length / 2))
+    }
+  }
+
+  // Process streaming audio chunk
+  async function processStreamingChunk(chunks: Float32Array[]) {
+    if (chunks.length === 0 || !hasWhisperModel.value) return
+
+    try {
+      // Concatenate audio chunks
+      const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+      const audioBuffer = new Float32Array(totalLength)
+      let offset = 0
+      for (const chunk of chunks) {
+        audioBuffer.set(chunk, offset)
+        offset += chunk.length
+      }
+
+      // Convert to WAV
+      const wavBlob = await createWavBlob(audioBuffer, 16000)
+      const audioBase64 = await blobToBase64(wavBlob)
+
+      // Calculate appropriate timeout based on chunk duration
+      const chunkDuration = audioBuffer.length / 16000
+      const timeoutMs = Math.max(3000, chunkDuration * 1000 * 2) // 2x real-time
+
+      console.log(`🎯 Processing ${chunkDuration.toFixed(1)}s chunk with VAD`)
+
+      // Get GPU setting
+      const enableGpu = await getGpuSettingFromStorage()
+
+      // Process with Whisper
+      const result = await invoke<{
+        text: string
+        confidence: number
+        start_time: number
+        end_time: number
+        language?: string
+      }>('transcribe_audio_base64', {
+        audioData: audioBase64,
+        config: {
+          modelSize: defaultWhisperConfig.modelSize,
+          language: defaultWhisperConfig.language,
+          enableVad: defaultWhisperConfig.enableVAD,
+          silenceThreshold: defaultWhisperConfig.silenceThreshold,
+          maxSegmentLength: defaultWhisperConfig.maxSegmentLength
+        }
+      })
+
+      if (result.text.trim()) {
+        // Append to final text
+        finalText.value = (finalText.value + ' ' + result.text).trim()
+        currentTranscript.value = finalText.value
+        
+        // Add to history
+        const transcriptionResult: TranscriptionResult = {
+          text: result.text,
+          finalText: result.text,
+          isFinal: true,
+          confidence: result.confidence,
+          timestamp: Date.now(),
+          source: 'whisper-stream',
+          sessionId: currentSession.value?.id
+        }
+        
+        transcriptionHistory.value.push(transcriptionResult)
+        
+        // Emit streaming update
+        emitTranscriptionEvent('streaming-update', {
+          text: result.text,
+          totalText: finalText.value
+        })
+      }
+    } catch (err) {
+      console.warn('Chunk processing failed:', err)
+    }
+  }
+
+  // Helper function to get GPU setting from storage
+  async function getGpuSettingFromStorage(): Promise<boolean> {
+    try {
+      const settings = await invoke<any>('load_general_settings')
+      return settings?.enableGpuAcceleration ?? true
+    } catch {
+      return true // Default to enabled
+    }
+  }
+
+  // Create WAV blob from Float32Array
+  async function createWavBlob(audioData: Float32Array, sampleRate: number): Promise<Blob> {
+    const length = audioData.length
+    const arrayBuffer = new ArrayBuffer(44 + length * 2)
+    const view = new DataView(arrayBuffer)
+
+    // WAV header
+    const writeString = (offset: number, string: string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i))
+      }
+    }
+
+    writeString(0, 'RIFF')
+    view.setUint32(4, 36 + length * 2, true)
+    writeString(8, 'WAVE')
+    writeString(12, 'fmt ')
+    view.setUint32(16, 16, true) // fmt chunk size
+    view.setUint16(20, 1, true) // PCM format
+    view.setUint16(22, 1, true) // Mono
+    view.setUint32(24, sampleRate, true)
+    view.setUint32(28, sampleRate * 2, true) // byte rate
+    view.setUint16(32, 2, true) // block align
+    view.setUint16(34, 16, true) // bits per sample
+    writeString(36, 'data')
+    view.setUint32(40, length * 2, true)
+
+    // Convert float32 to int16
+    let offset = 44
+    for (let i = 0; i < length; i++) {
+      const sample = Math.max(-1, Math.min(1, audioData[i]))
+      view.setInt16(offset, sample * 0x7FFF, true)
+      offset += 2
+    }
+
+    return new Blob([arrayBuffer], { type: 'audio/wav' })
   }
 
   // Request microphone permission
@@ -518,10 +699,20 @@ export function useSpeechTranscription() {
       // Clean up silence detection
       resetSilenceTimer()
       if (audioContext && audioContext.state !== 'closed') {
+        // Disconnect script processor
+        if (scriptProcessor) {
+          scriptProcessor.disconnect()
+          scriptProcessor = null
+        }
         await audioContext.close()
         audioContext = null
         analyser = null
       }
+      
+      // Clear voice chunks
+      voiceChunks = []
+      isVoiceActive = false
+      silenceFrameCount = 0
 
       // Stop Web Speech API
       if (recognition) {
@@ -852,6 +1043,32 @@ export function useSpeechTranscription() {
       reader.readAsDataURL(blob)
     })
   }
+
+  // Listen for whisper model changes from settings
+  onMounted(() => {
+    const handleWhisperModelChange = async (event: any) => {
+      console.log('🔄 Whisper models changed, reinitializing...', event.detail)
+      
+      // Update the default config with new model
+      if (event.detail.microphoneModel) {
+        defaultWhisperConfig.modelSize = event.detail.microphoneModel
+      }
+      
+      // Reinitialize with new settings
+      try {
+        await initialize()
+      } catch (error) {
+        console.error('Failed to reinitialize whisper:', error)
+      }
+    }
+    
+    window.addEventListener('whisper-models-changed', handleWhisperModelChange)
+    
+    // Cleanup listener on unmount
+    onUnmounted(() => {
+      window.removeEventListener('whisper-models-changed', handleWhisperModelChange)
+    })
+  })
 
   // Cleanup
   onUnmounted(() => {

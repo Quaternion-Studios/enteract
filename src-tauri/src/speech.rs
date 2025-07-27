@@ -9,12 +9,29 @@ use anyhow::Result;
 use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GpuConfig {
+    pub use_gpu: bool,
+    pub gpu_device: Option<i32>,
+    pub gpu_type: GpuType,
+    pub gpu_name: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum GpuType {
+    Cuda,
+    Metal,
+    OpenCL,
+    Cpu,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AudioConfig {
     pub sample_rate: u32,
     pub chunk_size: usize,
     pub silence_threshold: f32,
     pub silence_duration: f32,
     pub max_recording_duration: f32,
+    pub gpu_config: Option<GpuConfig>,
 }
 
 impl Default for AudioConfig {
@@ -25,6 +42,7 @@ impl Default for AudioConfig {
             silence_threshold: 0.01,
             silence_duration: 2.0,
             max_recording_duration: 30.0,
+            gpu_config: None,
         }
     }
 }
@@ -76,6 +94,7 @@ pub struct TranscriptionResult {
 // Global whisper context
 lazy_static::lazy_static! {
     pub static ref WHISPER_CONTEXT: Arc<Mutex<Option<WhisperContext>>> = Arc::new(Mutex::new(None));
+    pub static ref GPU_CONFIG: Arc<Mutex<Option<GpuConfig>>> = Arc::new(Mutex::new(None));
     static ref MODEL_CACHE_DIR: PathBuf = {
         let mut cache_dir = std::env::temp_dir();
         cache_dir.push("enteract");
@@ -84,20 +103,109 @@ lazy_static::lazy_static! {
     };
 }
 
+// GPU detection functions
+async fn detect_gpu_capabilities() -> GpuConfig {
+    // Check for CUDA availability on Windows/Linux
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Ok(nvidia_output) = std::process::Command::new("nvidia-smi")
+            .output()
+        {
+            if nvidia_output.status.success() {
+                let output_str = String::from_utf8_lossy(&nvidia_output.stdout);
+                if output_str.contains("NVIDIA") {
+                    // Extract GPU name
+                    let gpu_name = output_str
+                        .lines()
+                        .find(|line| line.contains("NVIDIA"))
+                        .and_then(|line| {
+                            line.split('|')
+                                .nth(1)
+                                .map(|s| s.trim().to_string())
+                        });
+                    
+                    return GpuConfig {
+                        use_gpu: true,
+                        gpu_device: Some(0),
+                        gpu_type: GpuType::Cuda,
+                        gpu_name,
+                    };
+                }
+            }
+        }
+    }
+    
+    // Check for Metal on macOS
+    #[cfg(target_os = "macos")]
+    {
+        // macOS with Apple Silicon or discrete GPU supports Metal
+        return GpuConfig {
+            use_gpu: true,
+            gpu_device: Some(0),
+            gpu_type: GpuType::Metal,
+            gpu_name: Some("Metal GPU".to_string()),
+        };
+    }
+    
+    // Fallback to CPU
+    GpuConfig {
+        use_gpu: false,
+        gpu_device: None,
+        gpu_type: GpuType::Cpu,
+        gpu_name: None,
+    }
+}
+
 // Whisper-rs commands for frontend
 #[tauri::command]
 pub async fn initialize_whisper_model(config: WhisperModelConfig) -> Result<String, String> {
+    initialize_whisper_model_with_gpu(config, true).await
+}
+
+#[tauri::command]
+pub async fn initialize_whisper_model_with_gpu(config: WhisperModelConfig, use_gpu: bool) -> Result<String, String> {
+    let gpu_config = if use_gpu {
+        detect_gpu_capabilities().await
+    } else {
+        GpuConfig {
+            use_gpu: false,
+            gpu_device: None,
+            gpu_type: GpuType::Cpu,
+            gpu_name: None,
+        }
+    };
+    
     let model_path = get_or_download_model(&config.modelSize).await?;
+    
+    let mut params = WhisperContextParameters::default();
+    
+    if gpu_config.use_gpu {
+        params.use_gpu(true);
+        if let Some(device) = gpu_config.gpu_device {
+            params.gpu_device(device);
+        }
+    }
     
     let ctx = WhisperContext::new_with_params(
         model_path.to_str().ok_or("Invalid model path")?,
-        WhisperContextParameters::default()
+        params
     ).map_err(|e| format!("Failed to initialize Whisper context: {}", e))?;
     
     let mut whisper_ctx = WHISPER_CONTEXT.lock().unwrap();
     *whisper_ctx = Some(ctx);
     
-    Ok(format!("Whisper model '{}' initialized successfully", config.modelSize))
+    // Store GPU config
+    let mut gpu_cfg = GPU_CONFIG.lock().unwrap();
+    *gpu_cfg = Some(gpu_config.clone());
+    
+    let acceleration = if gpu_config.use_gpu {
+        format!("{:?} ({})", gpu_config.gpu_type, gpu_config.gpu_name.unwrap_or_default())
+    } else {
+        "CPU".to_string()
+    };
+    
+    Ok(format!("Whisper model '{}' initialized with {} acceleration", 
+               config.modelSize, acceleration))
 }
 
 #[tauri::command]
@@ -231,6 +339,18 @@ pub async fn list_available_models() -> Result<Vec<String>, String> {
         "medium".to_string(),
         "large".to_string(),
     ])
+}
+
+#[tauri::command]
+pub async fn get_gpu_info() -> Result<GpuConfig, String> {
+    let gpu_config = detect_gpu_capabilities().await;
+    Ok(gpu_config)
+}
+
+#[tauri::command]
+pub async fn get_current_gpu_config() -> Result<Option<GpuConfig>, String> {
+    let gpu_cfg = GPU_CONFIG.lock().unwrap();
+    Ok(gpu_cfg.clone())
 }
 
 // Helper functions for Whisper

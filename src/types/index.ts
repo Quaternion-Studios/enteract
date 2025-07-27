@@ -137,4 +137,7 @@ export interface TransparencyPresets {
 }
 
 // Re-export speech transcription types
-export * from './speechTranscription' 
+export * from './speechTranscription'
+
+// Re-export audio types
+export * from './audio' 
