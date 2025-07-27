@@ -108,27 +108,37 @@ async fn detect_gpu_capabilities() -> GpuConfig {
     // Check for CUDA availability on Windows/Linux
     #[cfg(not(target_os = "macos"))]
     {
+        // First try to get detailed GPU info with nvidia-smi
+        if let Ok(nvidia_output) = std::process::Command::new("nvidia-smi")
+            .arg("--query-gpu=gpu_name")
+            .arg("--format=csv,noheader,nounits")
+            .output()
+        {
+            if nvidia_output.status.success() {
+                let gpu_name = String::from_utf8_lossy(&nvidia_output.stdout).trim().to_string();
+                if !gpu_name.is_empty() {
+                    return GpuConfig {
+                        use_gpu: true,
+                        gpu_device: Some(0),
+                        gpu_type: GpuType::Cuda,
+                        gpu_name: Some(gpu_name),
+                    };
+                }
+            }
+        }
+        
+        // Fallback to basic nvidia-smi check
         if let Ok(nvidia_output) = std::process::Command::new("nvidia-smi")
             .output()
         {
             if nvidia_output.status.success() {
                 let output_str = String::from_utf8_lossy(&nvidia_output.stdout);
-                if output_str.contains("NVIDIA") {
-                    // Extract GPU name
-                    let gpu_name = output_str
-                        .lines()
-                        .find(|line| line.contains("NVIDIA"))
-                        .and_then(|line| {
-                            line.split('|')
-                                .nth(1)
-                                .map(|s| s.trim().to_string())
-                        });
-                    
+                if output_str.contains("NVIDIA") || output_str.contains("Driver Version") {
                     return GpuConfig {
                         use_gpu: true,
                         gpu_device: Some(0),
                         gpu_type: GpuType::Cuda,
-                        gpu_name,
+                        gpu_name: Some("NVIDIA GPU".to_string()),
                     };
                 }
             }
@@ -342,6 +352,73 @@ pub async fn list_available_models() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+pub async fn get_available_models_for_device(device_type: String) -> Result<Vec<String>, String> {
+    let gpu_config = detect_gpu_capabilities().await;
+    
+    match device_type.as_str() {
+        "microphone" => {
+            // Microphone should use fast models for real-time performance
+            Ok(vec![
+                "tiny".to_string(),
+                "base".to_string(),
+                "small".to_string(),
+            ])
+        },
+        "loopback" => {
+            // System audio loopback can use larger models if GPU is available
+            let mut models = vec![
+                "tiny".to_string(),
+                "base".to_string(),
+                "small".to_string(),
+            ];
+            
+            // Only add medium if GPU is available and capable
+            if is_gpu_capable_for_medium(&gpu_config) {
+                models.push("medium".to_string());
+            }
+            
+            Ok(models)
+        },
+        _ => Err("Invalid device type. Use 'microphone' or 'loopback'".to_string())
+    }
+}
+
+// Check if GPU is capable of running medium model efficiently
+fn is_gpu_capable_for_medium(gpu_config: &GpuConfig) -> bool {
+    if !gpu_config.use_gpu {
+        return false;
+    }
+    
+    match gpu_config.gpu_type {
+        GpuType::Cuda => {
+            // For NVIDIA GPUs, if CUDA is available and working, assume it's capable
+            // Modern NVIDIA drivers (like 566.41) with CUDA 12.7 should handle medium models
+            if let Some(ref gpu_name) = gpu_config.gpu_name {
+                let name_lower = gpu_name.to_lowercase();
+                // Any modern NVIDIA GPU (RTX, GTX 10 series+, or professional cards)
+                name_lower.contains("rtx") || 
+                name_lower.contains("gtx") ||
+                name_lower.contains("quadro") ||
+                name_lower.contains("tesla") ||
+                name_lower.contains("nvidia") ||
+                name_lower.contains("geforce") ||
+                // If nvidia-smi works, the GPU is likely capable
+                true
+            } else {
+                // If CUDA is detected but no specific GPU name, still allow it
+                // This covers cases where nvidia-smi works but parsing fails
+                true
+            }
+        },
+        GpuType::Metal => {
+            // Apple Silicon M1/M2/M3 can handle medium model well
+            true
+        },
+        _ => false
+    }
+}
+
+#[tauri::command]
 pub async fn get_gpu_info() -> Result<GpuConfig, String> {
     let gpu_config = detect_gpu_capabilities().await;
     Ok(gpu_config)
@@ -351,6 +428,23 @@ pub async fn get_gpu_info() -> Result<GpuConfig, String> {
 pub async fn get_current_gpu_config() -> Result<Option<GpuConfig>, String> {
     let gpu_cfg = GPU_CONFIG.lock().unwrap();
     Ok(gpu_cfg.clone())
+}
+
+#[tauri::command]
+pub async fn debug_gpu_capability_check() -> Result<serde_json::Value, String> {
+    let gpu_config = detect_gpu_capabilities().await;
+    let is_capable = is_gpu_capable_for_medium(&gpu_config);
+    
+    Ok(serde_json::json!({
+        "gpu_config": gpu_config,
+        "is_capable_for_medium": is_capable,
+        "gpu_acceleration_enabled": gpu_config.use_gpu,
+        "available_models_loopback": if is_capable {
+            vec!["tiny", "base", "small", "medium"]
+        } else {
+            vec!["tiny", "base", "small"]
+        }
+    }))
 }
 
 // Helper functions for Whisper
