@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, nextTick } from 'vue'
+import { ref, watch, onMounted, nextTick, computed } from 'vue'
 import {
   Cog6ToothIcon,
   XMarkIcon,
@@ -104,8 +104,8 @@ const generalSettings = ref({
   enableAutoSave: true,
   autoSaveInterval: 5,
   // Whisper model settings
-  microphoneWhisperModel: 'tiny',
-  loopbackWhisperModel: 'small',
+  microphoneWhisperModel: 'base',
+  loopbackWhisperModel: 'base',
   // GPU acceleration settings
   enableGpuAcceleration: true,
   // Transparency settings
@@ -129,6 +129,24 @@ const isLoadingGpuInfo = ref(false)
 // Model loading state
 const isReloadingModel = ref(false)
 const modelReloadMessage = ref('')
+
+// Unified model selection - both microphone and loopback use the same model
+const unifiedWhisperModel = computed({
+  get: () => generalSettings.value.microphoneWhisperModel, // Use microphone as the source of truth
+  set: (newModel: string) => {
+    // Set both microphone and loopback to the same model
+    generalSettings.value.microphoneWhisperModel = newModel
+    generalSettings.value.loopbackWhisperModel = newModel
+    console.log(`🔄 Setting unified Whisper model to: ${newModel}`)
+    saveGeneralSettings()
+  }
+})
+
+// Available models for unified selection (exclude medium)
+const unifiedAvailableModels = computed(() => {
+  const baseModels = ['tiny', 'base', 'small']
+  return baseModels
+})
 
 // Ollama GPU info state
 const ollamaGpuInfo = ref<{
@@ -255,7 +273,7 @@ const saveGeneralSettings = async () => {
     const currentModel = generalSettings.value.loopbackWhisperModel
     
     // Show loading state for model changes
-    if (currentModel === 'medium' || isReloadingModel.value) {
+    if (isReloadingModel.value || currentModel) {
       isReloadingModel.value = true
       modelReloadMessage.value = `Loading ${currentModel} model...`
     }
@@ -353,13 +371,13 @@ watch(generalSettings, (newSettings, oldSettings) => {
   
   // Validate model selections
   if (!availableModels.value.microphone.includes(newSettings.microphoneWhisperModel)) {
-    console.warn('⚠️ [FRONTEND] Invalid microphone model selected, resetting to tiny')
-    newSettings.microphoneWhisperModel = 'tiny'
+    console.warn('⚠️ [FRONTEND] Invalid microphone model selected, resetting to base')
+    newSettings.microphoneWhisperModel = 'base'
   }
   
   if (!availableModels.value.loopback.includes(newSettings.loopbackWhisperModel)) {
-    console.warn('⚠️ [FRONTEND] Invalid loopback model selected, resetting to small')
-    newSettings.loopbackWhisperModel = 'small'
+    console.warn('⚠️ [FRONTEND] Invalid loopback model selected, resetting to base')
+    newSettings.loopbackWhisperModel = 'base'
   }
   
   // Check if whisper model settings changed and emit event for reinitialization
@@ -407,14 +425,14 @@ watch(generalSettings, (newSettings, oldSettings) => {
 watch(availableModels, (newModels) => {
   // Validate current microphone model selection
   if (!newModels.microphone.includes(generalSettings.value.microphoneWhisperModel)) {
-    console.warn('⚠️ Current microphone model not available, resetting to tiny')
-    generalSettings.value.microphoneWhisperModel = 'tiny'
+    console.warn('⚠️ Current microphone model not available, resetting to base')
+    generalSettings.value.microphoneWhisperModel = 'base'
   }
   
   // Validate current loopback model selection
   if (!newModels.loopback.includes(generalSettings.value.loopbackWhisperModel)) {
-    console.warn('⚠️ Current loopback model not available, resetting to small')
-    generalSettings.value.loopbackWhisperModel = 'small'
+    console.warn('⚠️ Current loopback model not available, resetting to base')
+    generalSettings.value.loopbackWhisperModel = 'base'
   }
 }, { deep: true })
 
@@ -1050,26 +1068,10 @@ onMounted(() => {
               
               <div class="setting-item">
                 <label class="setting-label-full">
-                  <span class="text-white/90">Microphone Whisper Model</span>
-                  <select v-model="generalSettings.microphoneWhisperModel" class="setting-select">
+                  <span class="text-white/90">Whisper Model (Microphone & System Audio)</span>
+                  <select v-model="unifiedWhisperModel" class="setting-select">
                     <option 
-                      v-for="model in availableModels.microphone" 
-                      :key="model" 
-                      :value="model"
-                    >
-                      {{ getWhisperModelDisplayName(model) }}
-                    </option>
-                  </select>
-                </label>
-                <p class="text-white/60 text-xs mt-1">Model used for microphone transcription. Tiny is recommended for real-time performance.</p>
-              </div>
-              
-              <div class="setting-item">
-                <label class="setting-label-full">
-                  <span class="text-white/90">System Audio Whisper Model</span>
-                  <select v-model="generalSettings.loopbackWhisperModel" class="setting-select">
-                    <option 
-                      v-for="model in availableModels.loopback" 
+                      v-for="model in unifiedAvailableModels" 
                       :key="model" 
                       :value="model"
                     >
@@ -1078,13 +1080,8 @@ onMounted(() => {
                   </select>
                 </label>
                 <p class="text-white/60 text-xs mt-1">
-                  Model used for system audio loopback transcription. 
-                  <span v-if="availableModels.loopback.includes('medium')" class="text-green-400/80">
-                    Medium model available with GPU acceleration!
-                  </span>
-                  <span v-else>
-                    Medium model requires capable GPU.
-                  </span>
+                  Model used for both microphone and system audio transcription. 
+                  Base model provides a good balance of accuracy and performance.
                 </p>
                 
                 <!-- Model loading feedback -->
