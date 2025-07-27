@@ -135,6 +135,15 @@ const ollamaGpuInfo = ref<{
 } | null>(null)
 const isLoadingOllamaGpuInfo = ref(false)
 
+// Available models for each device type
+const availableModels = ref<{
+  microphone: string[]
+  loopback: string[]
+}>({
+  microphone: ['tiny', 'base', 'small'],
+  loopback: ['tiny', 'base', 'small']
+})
+
 // Audio device enumeration functions
 const enumerateAudioDevices = async () => {
   isLoadingAudioDevices.value = true
@@ -270,6 +279,12 @@ watch(() => props.showSettingsPanel, async (newValue) => {
     if (activeTab.value === 'audio') {
       await enumerateAudioDevices()
     }
+    
+    // Load GPU info and models if on general tab
+    if (activeTab.value === 'general') {
+      await fetchGpuInfo()
+      await fetchAvailableModels()
+    }
   } else {
     // Unregister when settings panel closes
     windowRegistry.unregisterSelf()
@@ -290,6 +305,7 @@ watch(activeTab, async (newTab) => {
     await enumerateAudioDevices()
   } else if (newTab === 'general') {
     await fetchGpuInfo()
+    await fetchAvailableModels()
   }
 })
 
@@ -306,6 +322,17 @@ watch(generalSettings, (newSettings, oldSettings) => {
     newEnabled: newSettings.enableTransparency,
     oldEnabled: oldSettings?.enableTransparency
   })
+  
+  // Validate model selections
+  if (!availableModels.value.microphone.includes(newSettings.microphoneWhisperModel)) {
+    console.warn('⚠️ Invalid microphone model selected, resetting to tiny')
+    newSettings.microphoneWhisperModel = 'tiny'
+  }
+  
+  if (!availableModels.value.loopback.includes(newSettings.loopbackWhisperModel)) {
+    console.warn('⚠️ Invalid loopback model selected, resetting to small')
+    newSettings.loopbackWhisperModel = 'small'
+  }
   
   // Check if whisper model settings changed and emit event for reinitialization
   if (oldSettings && (
@@ -337,6 +364,21 @@ watch(generalSettings, (newSettings, oldSettings) => {
   
   // Auto-save all general settings changes
   saveGeneralSettings()
+}, { deep: true })
+
+// Watch for available models changes and validate current selections
+watch(availableModels, (newModels) => {
+  // Validate current microphone model selection
+  if (!newModels.microphone.includes(generalSettings.value.microphoneWhisperModel)) {
+    console.warn('⚠️ Current microphone model not available, resetting to tiny')
+    generalSettings.value.microphoneWhisperModel = 'tiny'
+  }
+  
+  // Validate current loopback model selection
+  if (!newModels.loopback.includes(generalSettings.value.loopbackWhisperModel)) {
+    console.warn('⚠️ Current loopback model not available, resetting to small')
+    generalSettings.value.loopbackWhisperModel = 'small'
+  }
 }, { deep: true })
 
 
@@ -381,6 +423,42 @@ const fetchOllamaGpuInfo = async () => {
   } finally {
     isLoadingOllamaGpuInfo.value = false
   }
+}
+
+// Fetch available models for each device type
+const fetchAvailableModels = async () => {
+  try {
+    const microphoneModels = await invoke<string[]>('get_available_models_for_device', { deviceType: 'microphone' })
+    const loopbackModels = await invoke<string[]>('get_available_models_for_device', { deviceType: 'loopback' })
+    
+    availableModels.value = {
+      microphone: microphoneModels,
+      loopback: loopbackModels
+    }
+    
+    console.log('📋 Available models:', availableModels.value)
+    
+    // Debug GPU capability check
+    try {
+      const debugInfo = await invoke('debug_gpu_capability_check')
+      console.log('🔍 GPU Debug Info:', debugInfo)
+    } catch (debugError) {
+      console.error('Debug GPU check failed:', debugError)
+    }
+  } catch (error) {
+    console.error('Failed to fetch available models:', error)
+  }
+}
+
+// Get display name for whisper models
+const getWhisperModelDisplayName = (modelName: string) => {
+  const descriptions: { [key: string]: string } = {
+    'tiny': 'Tiny (Fastest, Good accuracy)',
+    'base': 'Base (Balanced speed/accuracy)',
+    'small': 'Small (Better accuracy, Slower)',
+    'medium': 'Medium (Best accuracy, GPU required)'
+  }
+  return descriptions[modelName] || modelName
 }
 
 
@@ -937,9 +1015,13 @@ onMounted(() => {
                 <label class="setting-label-full">
                   <span class="text-white/90">Microphone Whisper Model</span>
                   <select v-model="generalSettings.microphoneWhisperModel" class="setting-select">
-                    <option value="tiny">Tiny (Fastest, Good accuracy)</option>
-                    <option value="base">Base (Balanced speed/accuracy)</option>
-                    <option value="small">Small (Best accuracy, Slower)</option>
+                    <option 
+                      v-for="model in availableModels.microphone" 
+                      :key="model" 
+                      :value="model"
+                    >
+                      {{ getWhisperModelDisplayName(model) }}
+                    </option>
                   </select>
                 </label>
                 <p class="text-white/60 text-xs mt-1">Model used for microphone transcription. Tiny is recommended for real-time performance.</p>
@@ -949,12 +1031,24 @@ onMounted(() => {
                 <label class="setting-label-full">
                   <span class="text-white/90">System Audio Whisper Model</span>
                   <select v-model="generalSettings.loopbackWhisperModel" class="setting-select">
-                    <option value="tiny">Tiny (Fastest, Good accuracy)</option>
-                    <option value="base">Base (Balanced speed/accuracy)</option>
-                    <option value="small">Small (Best accuracy, Slower)</option>
+                    <option 
+                      v-for="model in availableModels.loopback" 
+                      :key="model" 
+                      :value="model"
+                    >
+                      {{ getWhisperModelDisplayName(model) }}
+                    </option>
                   </select>
                 </label>
-                <p class="text-white/60 text-xs mt-1">Model used for system audio loopback transcription. Base is recommended for better accuracy with recorded audio.</p>
+                <p class="text-white/60 text-xs mt-1">
+                  Model used for system audio loopback transcription. 
+                  <span v-if="availableModels.loopback.includes('medium')" class="text-green-400/80">
+                    Medium model available with GPU acceleration!
+                  </span>
+                  <span v-else>
+                    Medium model requires capable GPU.
+                  </span>
+                </p>
               </div>
               
               <!-- GPU Acceleration Settings -->
