@@ -762,4 +762,36 @@ pub async fn check_ollama_gpu_usage(model_name: String) -> Result<serde_json::Va
     });
     
     Ok(response)
+}
+
+#[tauri::command]
+pub async fn preload_ollama_model(model: String) -> Result<String, String> {
+    let client = Arc::clone(&HTTP_CLIENT);
+    let url = format!("{}/api/generate", OLLAMA_BASE_URL);
+    
+    // Send a minimal prompt to load the model into memory
+    let request = GenerateRequest {
+        model: model.clone(),
+        prompt: "Hello".to_string(),
+        stream: Some(false),
+        context: None,
+        images: None,
+        system: None,
+    };
+    
+    println!("🔄 Pre-loading model {} into memory...", model);
+    
+    match client.post(&url).json(&request).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                // We don't care about the response, just that the model loaded
+                println!("✅ Model {} successfully pre-loaded into memory", model);
+                Ok(format!("Model {} pre-loaded successfully", model))
+            } else {
+                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                Err(format!("Failed to pre-load model: {}", error_text))
+            }
+        }
+        Err(e) => Err(format!("Failed to connect to Ollama: {}. Make sure Ollama is running.", e)),
+    }
 } 
