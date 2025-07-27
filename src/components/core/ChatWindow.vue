@@ -695,7 +695,7 @@ onUnmounted(() => {
 }
 
 .message-bubble {
-  @apply rounded-2xl p-3 max-w-xs;
+  @apply rounded-2xl p-3 w-full;
   word-wrap: break-word;
 }
 

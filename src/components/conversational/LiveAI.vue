@@ -22,6 +22,7 @@ interface Props {
   suggestions?: SuggestionItem[]
   error?: string | null
   sessionId?: string | null
+  isModelPreloaded?: boolean
 }
 
 interface Emits {
@@ -41,6 +42,9 @@ const statusMessage = computed(() => {
   }
   if (props.isActive) {
     return 'Listening to conversation...'
+  }
+  if (props.isModelPreloaded) {
+    return 'Model pre-loaded! Click Start to enable live AI responses'
   }
   return 'Click Start to enable live AI responses'
 })
@@ -197,9 +201,9 @@ watch(() => props.suggestions, async (newSuggestions) => {
 
 <style scoped>
 .live-ai-drawer {
-  @apply w-80 border-l border-white/10 bg-white/5 backdrop-blur-sm flex flex-col;
-  min-width: 320px;
-  max-width: 400px;
+  @apply w-4/5 border-l border-white/10 bg-white/5 backdrop-blur-sm flex flex-col;
+  min-width: 600px;
+  max-width: 85vw;
   background: linear-gradient(135deg, 
     rgba(20, 15, 15, 0.95) 0%,
     rgba(25, 15, 10, 0.95) 50%,

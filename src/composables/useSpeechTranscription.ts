@@ -42,6 +42,7 @@ export function useSpeechTranscription() {
   let audioChunks: Blob[] = []
   let recognition: SpeechRecognition | null = null
   let audioStream: MediaStream | null = null
+  let whisperAbortController: AbortController | null = null
 
   // Silence detection and VAD
   let silenceTimer: number | null = null
@@ -62,7 +63,7 @@ export function useSpeechTranscription() {
 
   // Configuration
   const defaultWhisperConfig: WhisperConfig = {
-    modelSize: 'base',
+    modelSize: 'tiny',
     language: 'en',
     enableVAD: true,
     silenceThreshold: 0.01,
@@ -681,11 +682,16 @@ export function useSpeechTranscription() {
         }
 
         mediaRecorder.onstop = async () => {
+          console.log(`🎤 MediaRecorder.onstop fired - chunks: ${audioChunks.length}, shutting down: ${isShuttingDown.value}`)
+          
           if (audioChunks.length > 0 && !isShuttingDown.value) {
+            console.log('🔄 Processing final audio chunks with Whisper...')
             await processAudioWithWhisper()
           } else if (isShuttingDown.value) {
             console.log('🛑 Skipping final audio processing - session is shutting down')
             audioChunks = [] // Clear any remaining chunks
+          } else {
+            console.log('ℹ️ No audio chunks to process on stop')
           }
         }
 
@@ -713,15 +719,29 @@ export function useSpeechTranscription() {
 
   // Enhanced stop recording with cleanup and auto-send
   const stopRecording = async () => {
-    if (!isRecording.value) return
+    if (!isRecording.value) {
+      console.log('⚠️ stopRecording called but not currently recording')
+      return
+    }
 
+    console.log('🛑 [STOP_RECORDING] Starting shutdown sequence...')
+    
     try {
       // Set shutdown flag to prevent further processing
       isShuttingDown.value = true
+      console.log('🛑 [STOP_RECORDING] Shutdown flag set to true')
+      
+      // Abort any ongoing Whisper processing
+      if (whisperAbortController) {
+        console.log('🛑 [STOP_RECORDING] Aborting ongoing Whisper processing')
+        whisperAbortController.abort()
+        whisperAbortController = null
+      }
       
       // Immediately reset recording state for responsive UX
       isRecording.value = false
       isTranscribing.value = false
+      console.log('🛑 [STOP_RECORDING] Recording and transcribing flags set to false')
       
       // Clean up silence detection
       resetSilenceTimer()
@@ -749,7 +769,11 @@ export function useSpeechTranscription() {
 
       // Stop MediaRecorder
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        console.log(`🛑 [STOP_RECORDING] Stopping MediaRecorder (state: ${mediaRecorder.state}, chunks: ${audioChunks.length})`)
         mediaRecorder.stop()
+        console.log('🛑 [STOP_RECORDING] MediaRecorder.stop() called - waiting for onstop event')
+      } else {
+        console.log(`🛑 [STOP_RECORDING] MediaRecorder already inactive or null (state: ${mediaRecorder?.state})`)
       }
 
       // Stop audio stream
@@ -766,18 +790,8 @@ export function useSpeechTranscription() {
 
       console.log('Recording stopped - button state immediately reset')
       
-      // Auto-send the transcribed message if there's content and auto-send is enabled
-      if (finalText.value.trim() && autoSendToChat.value) {
-        // Emit event to send the message to chat
-        const sendMessageEvent = new CustomEvent('send-transcribed-message', {
-          detail: {
-            text: finalText.value.trim(),
-            timestamp: Date.now()
-          }
-        })
-        window.dispatchEvent(sendMessageEvent)
-        console.log('📤 Auto-sending transcribed message:', finalText.value.trim())
-      }
+      // No auto-send needed - messages are sent individually as they're transcribed
+      console.log('🚫 Auto-send disabled - messages sent individually during transcription')
       
       // Emit final state
       emitTranscriptionEvent('transcription-complete', {
@@ -825,7 +839,8 @@ export function useSpeechTranscription() {
     try {
       // Don't set isProcessing to true here - let background processing happen
       // without blocking the UI state
-      console.log(`🔄 Processing ${audioChunks.length} audio chunks with Whisper (small model)...`)
+      console.log(`🔄 [WHISPER_PROCESS] Processing ${audioChunks.length} audio chunks with Whisper (tiny model)...`)
+      console.log(`🔄 [WHISPER_PROCESS] Shutdown flag: ${isShuttingDown.value}, Recording: ${isRecording.value}`)
 
       // Combine audio chunks
       const audioBlob = new Blob(audioChunks, { type: mediaRecorder?.mimeType || 'audio/webm' })
@@ -839,7 +854,11 @@ export function useSpeechTranscription() {
       const audioBase64 = await blobToBase64(wavBlob)
       console.log(`📝 Base64 audio data length: ${audioBase64.length}`)
 
+      // Create abort controller for this request
+      whisperAbortController = new AbortController()
+      
       // Send to Whisper for transcription with timeout for tiny model
+      console.log(`🏁 [WHISPER_PROCESS] Starting race between Whisper and 10s timeout...`)
       const result = await Promise.race([
         invoke<{
           text: string
@@ -857,29 +876,43 @@ export function useSpeechTranscription() {
             maxSegmentLength: defaultWhisperConfig.maxSegmentLength
           }
         }),
-        // Timeout after 20 seconds for base model (slower than tiny but more accurate)
+        // Timeout after 10 seconds for tiny model (fastest model)
         new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error('Whisper processing timeout')), 20000)
+          setTimeout(() => {
+            console.log('⏰ [WHISPER_PROCESS] 10-second timeout reached!')
+            reject(new Error('Whisper processing timeout'))
+          }, 10000)
         )
       ])
 
+      console.log(`✅ [WHISPER_PROCESS] Whisper completed successfully before timeout`)
       console.log('🎯 Whisper result:', result)
 
       if (result.text.trim()) {
-        // Update final text with Whisper result
+        // Send each transcription as separate message (like loopback)
         const newText = result.text.trim()
         
-        // If we have interim text from Web Speech API, replace it
-        if (interimText.value || !finalText.value) {
-          finalText.value = newText
-          interimText.value = ''
-        } else {
-          // Append to existing text
-          finalText.value += (finalText.value ? ' ' : '') + newText
+        console.log('✅ Whisper transcription (tiny model):', newText)
+        
+        // Skip if we're shutting down
+        if (isShuttingDown.value) {
+          console.log('🛑 [WHISPER_PROCESS] Skipping message - shutting down')
+          return
         }
         
-        currentTranscript.value = finalText.value
-
+        // Send as individual message with typing animation
+        // This will be handled by the conversation store like loopback messages
+        const sendMessageEvent = new CustomEvent('send-transcribed-message', {
+          detail: {
+            text: newText,
+            timestamp: Date.now(),
+            source: 'microphone',
+            confidence: result.confidence,
+            showTyping: true // Enable typing animation like loopback
+          }
+        })
+        window.dispatchEvent(sendMessageEvent)
+        
         // Add to history
         const transcriptionResult: TranscriptionResult = {
           text: newText,
@@ -888,17 +921,12 @@ export function useSpeechTranscription() {
           timestamp: Date.now(),
           source: 'whisper'
         }
-
         transcriptionHistory.value.push(transcriptionResult)
 
-        // Emit final transcription event
-        emitTranscriptionEvent('transcription-final', {
-          text: newText,
-          confidence: result.confidence,
-          timestamp: Date.now()
-        })
-
-        console.log('✅ Whisper transcription (small model):', newText)
+        // Clear text accumulation - each transcription is separate
+        finalText.value = ''
+        interimText.value = ''
+        currentTranscript.value = ''
       } else {
         console.log('ℹ️ Whisper returned empty text')
       }
@@ -906,7 +934,8 @@ export function useSpeechTranscription() {
       // Clear processed chunks
       audioChunks = []
     } catch (err) {
-      console.error('❌ Whisper processing error:', err)
+      console.error(`❌ [WHISPER_PROCESS] Whisper processing error:`, err)
+      console.error(`❌ [WHISPER_PROCESS] Error occurred with shutdown: ${isShuttingDown.value}, recording: ${isRecording.value}`)
       error.value = `Whisper processing failed: ${err}`
       
       // Emit error event for UI feedback
