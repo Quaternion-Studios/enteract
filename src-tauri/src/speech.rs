@@ -174,6 +174,8 @@ pub async fn initialize_whisper_model(config: WhisperModelConfig) -> Result<Stri
 
 #[tauri::command]
 pub async fn initialize_whisper_model_with_gpu(config: WhisperModelConfig, use_gpu: bool) -> Result<String, String> {
+    println!("🔍 [WHISPER_INIT] Called with model: '{}', use_gpu: {}", config.modelSize, use_gpu);
+    
     let gpu_config = if use_gpu {
         detect_gpu_capabilities().await
     } else {
@@ -185,7 +187,10 @@ pub async fn initialize_whisper_model_with_gpu(config: WhisperModelConfig, use_g
         }
     };
     
+    println!("🔍 [WHISPER_INIT] GPU config: {:?}", gpu_config);
+    
     let model_path = get_or_download_model(&config.modelSize).await?;
+    println!("🔍 [WHISPER_INIT] Model path: {:?}", model_path);
     
     let mut params = WhisperContextParameters::default();
     
@@ -194,6 +199,7 @@ pub async fn initialize_whisper_model_with_gpu(config: WhisperModelConfig, use_g
         if let Some(device) = gpu_config.gpu_device {
             params.gpu_device(device);
         }
+        println!("🔍 [WHISPER_INIT] GPU parameters set");
     }
     
     let ctx = WhisperContext::new_with_params(
@@ -214,12 +220,17 @@ pub async fn initialize_whisper_model_with_gpu(config: WhisperModelConfig, use_g
         "CPU".to_string()
     };
     
-    Ok(format!("Whisper model '{}' initialized with {} acceleration", 
-               config.modelSize, acceleration))
+    let result_msg = format!("Whisper model '{}' initialized with {} acceleration", 
+                           config.modelSize, acceleration);
+    println!("✅ [WHISPER_INIT] {}", result_msg);
+    
+    Ok(result_msg)
 }
 
 #[tauri::command]
 pub async fn transcribe_audio_base64(audioData: String, config: WhisperModelConfig) -> Result<TranscriptionResult, String> {
+    println!("🔍 [TRANSCRIBE] Called with model: '{}', language: {:?}", config.modelSize, config.language);
+    
     // Decode base64 audio data
     let audio_bytes = general_purpose::STANDARD
         .decode(&audioData)
@@ -237,6 +248,8 @@ pub async fn transcribe_audio_base64(audioData: String, config: WhisperModelConf
 
 #[tauri::command]
 pub async fn transcribe_audio_file(file_path: String, config: WhisperModelConfig) -> Result<TranscriptionResult, String> {
+    println!("🔍 [TRANSCRIBE_FILE] Called with model: '{}', file: {}", config.modelSize, file_path);
+    
     // Ensure model is initialized
     let needs_init = {
         let whisper_ctx = WHISPER_CONTEXT.lock().unwrap();
@@ -244,7 +257,10 @@ pub async fn transcribe_audio_file(file_path: String, config: WhisperModelConfig
     };
     
     if needs_init {
+        println!("🔍 [TRANSCRIBE_FILE] Model not initialized, initializing with model: '{}'", config.modelSize);
         initialize_whisper_model(config.clone()).await?;
+    } else {
+        println!("🔍 [TRANSCRIBE_FILE] Model already initialized, using existing model");
     }
     
     // Load and preprocess audio
@@ -447,16 +463,41 @@ pub async fn debug_gpu_capability_check() -> Result<serde_json::Value, String> {
     }))
 }
 
+#[tauri::command]
+pub async fn reload_whisper_model_for_loopback(model_size: String) -> Result<String, String> {
+    println!("🔄 [MODEL_RELOAD] Reloading Whisper model for loopback: '{}'", model_size);
+    
+    let config = WhisperModelConfig {
+        modelSize: model_size.clone(),
+        language: Some("en".to_string()),
+        enableVad: false,
+        silenceThreshold: 0.01,
+        maxSegmentLength: 30,
+    };
+    
+    // Force reload by initializing with GPU acceleration
+    let result = initialize_whisper_model_with_gpu(config, true).await?;
+    println!("✅ [MODEL_RELOAD] Model '{}' reloaded for loopback", model_size);
+    
+    Ok(result)
+}
+
 // Helper functions for Whisper
 async fn get_or_download_model(model_size: &str) -> Result<PathBuf, String> {
     let model_path = get_model_path(model_size);
     
-    if !model_path.exists() || !is_valid_model_file(&model_path) {
-        if model_path.exists() {
-            fs::remove_file(&model_path)
-                .map_err(|e| format!("Failed to remove invalid model: {}", e))?;
-        }
+    println!("🔍 [MODEL_CHECK] Checking model file: {:?}", model_path);
+    
+    if !model_path.exists() {
+        println!("🔍 [MODEL_CHECK] Model file does not exist, downloading...");
         download_model(model_size).await?;
+    } else if !is_valid_model_file(&model_path) {
+        println!("🔍 [MODEL_CHECK] Model file exists but is invalid, re-downloading...");
+        fs::remove_file(&model_path)
+            .map_err(|e| format!("Failed to remove invalid model: {}", e))?;
+        download_model(model_size).await?;
+    } else {
+        println!("✅ [MODEL_CHECK] Model file exists and is valid: {:?}", model_path);
     }
     
     Ok(model_path)
@@ -477,6 +518,8 @@ fn get_model_path(model_size: &str) -> PathBuf {
 }
 
 async fn download_model(model_size: &str) -> Result<(), String> {
+    println!("📥 [DOWNLOAD] Starting download for model: {}", model_size);
+    
     fs::create_dir_all(&*MODEL_CACHE_DIR)
         .map_err(|e| format!("Failed to create cache directory: {}", e))?;
     
@@ -487,22 +530,27 @@ async fn download_model(model_size: &str) -> Result<(), String> {
     
     let model_path = get_model_path(model_size);
     
-    println!("Downloading Whisper model '{}' from: {}", model_size, model_url);
+    println!("📥 [DOWNLOAD] Downloading Whisper model '{}' from: {}", model_size, model_url);
+    println!("📥 [DOWNLOAD] Target path: {:?}", model_path);
     
     let response = reqwest::get(&model_url).await
         .map_err(|e| format!("Failed to download model: {}", e))?;
     
     if !response.status().is_success() {
-        return Err(format!("Failed to download model: HTTP {}", response.status()));
+        let error_msg = format!("Failed to download model: HTTP {}", response.status());
+        println!("❌ [DOWNLOAD] {}", error_msg);
+        return Err(error_msg);
     }
     
     let bytes = response.bytes().await
         .map_err(|e| format!("Failed to read model data: {}", e))?;
     
+    println!("📥 [DOWNLOAD] Downloaded {} bytes", bytes.len());
+    
     fs::write(&model_path, bytes)
         .map_err(|e| format!("Failed to save model: {}", e))?;
     
-    println!("Successfully downloaded Whisper model '{}' to: {:?}", model_size, model_path);
+    println!("✅ [DOWNLOAD] Successfully downloaded Whisper model '{}' to: {:?}", model_size, model_path);
     
     Ok(())
 }

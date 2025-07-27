@@ -65,6 +65,9 @@ pub async fn load_audio_settings() -> Result<Option<AudioDeviceSettings>, String
 
 #[tauri::command]
 pub async fn save_general_settings(settings: HashMap<String, serde_json::Value>) -> Result<(), String> {
+    // Load existing settings to compare
+    let existing_settings = load_general_settings().await.unwrap_or(None);
+    
     let settings_path = get_general_settings_path()
         .map_err(|e| format!("Failed to get settings path: {}", e))?;
     
@@ -75,6 +78,45 @@ pub async fn save_general_settings(settings: HashMap<String, serde_json::Value>)
         .map_err(|e| format!("Failed to write settings file: {}", e))?;
     
     println!("💾 General settings saved");
+    
+    // Check if loopback whisper model changed
+    if let Some(existing) = existing_settings {
+        let old_model = existing.get("loopbackWhisperModel")
+            .and_then(|v| v.as_str())
+            .unwrap_or("small");
+        let new_model = settings.get("loopbackWhisperModel")
+            .and_then(|v| v.as_str())
+            .unwrap_or("small");
+        
+        if old_model != new_model {
+            println!("🔄 Loopback model changed from '{}' to '{}', reloading...", old_model, new_model);
+            
+            // Reload the whisper model with the new setting
+            match crate::speech::reload_whisper_model_for_loopback(new_model.to_string()).await {
+                Ok(result) => {
+                    println!("✅ Successfully reloaded model: {}", result);
+                },
+                Err(e) => {
+                    println!("❌ Failed to reload model: {}", e);
+                    // Don't fail the settings save if model reload fails
+                }
+            }
+        }
+    } else {
+        // First time saving settings, check if we should load a model
+        if let Some(model) = settings.get("loopbackWhisperModel").and_then(|v| v.as_str()) {
+            println!("🔄 Initial loopback model setting: '{}', preloading...", model);
+            match crate::speech::reload_whisper_model_for_loopback(model.to_string()).await {
+                Ok(result) => {
+                    println!("✅ Successfully preloaded model: {}", result);
+                },
+                Err(e) => {
+                    println!("❌ Failed to preload model: {}", e);
+                }
+            }
+        }
+    }
+    
     Ok(())
 }
 

@@ -89,7 +89,7 @@ export const useConversationStore = defineStore('conversation', () => {
   let saveTimeout: number | null = null
   watch(sessions, () => {
     if (saveTimeout) clearTimeout(saveTimeout)
-    saveTimeout = setTimeout(() => {
+    saveTimeout = window.setTimeout(() => {
       saveSessions().catch(console.error)
     }, 1000) // Debounce saves by 1 second
   }, { deep: true })
