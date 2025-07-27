@@ -126,6 +126,15 @@ const gpuInfo = ref<{
 } | null>(null)
 const isLoadingGpuInfo = ref(false)
 
+// Ollama GPU info state
+const ollamaGpuInfo = ref<{
+  gpu_available: boolean
+  gpu_type: string | null
+  gpu_memory: number | null
+  gpu_compute_capability: string | null
+} | null>(null)
+const isLoadingOllamaGpuInfo = ref(false)
+
 // Audio device enumeration functions
 const enumerateAudioDevices = async () => {
   isLoadingAudioDevices.value = true
@@ -251,6 +260,7 @@ watch(() => props.showSettingsPanel, async (newValue) => {
     // Load AI models if on models tab
     if (activeTab.value === 'models') {
       await fetchOllamaStatus()
+      await fetchOllamaGpuInfo()
       if (ollamaStatus.value.status === 'running') {
         await fetchOllamaModels()
       }
@@ -272,6 +282,7 @@ watch(activeTab, async (newTab) => {
   
   if (newTab === 'models') {
     await fetchOllamaStatus()
+    await fetchOllamaGpuInfo()
     if (ollamaStatus.value.status === 'running') {
       await fetchOllamaModels()
     }
@@ -355,6 +366,20 @@ const fetchGpuInfo = async () => {
     console.error('Failed to get GPU info:', error)
   } finally {
     isLoadingGpuInfo.value = false
+  }
+}
+
+// Fetch Ollama GPU information
+const fetchOllamaGpuInfo = async () => {
+  isLoadingOllamaGpuInfo.value = true
+  try {
+    const info = await invoke<typeof ollamaGpuInfo.value>('get_ollama_gpu_info')
+    ollamaGpuInfo.value = info
+    console.log('🎮 Ollama GPU info:', info)
+  } catch (error) {
+    console.error('Failed to get Ollama GPU info:', error)
+  } finally {
+    isLoadingOllamaGpuInfo.value = false
   }
 }
 
@@ -534,6 +559,36 @@ onMounted(() => {
               </div>
               <div v-else class="status-error">
                 <span class="text-red-400">● Failed to connect to model manager</span>
+              </div>
+            </div>
+            
+            <!-- Ollama GPU Info Display -->
+            <div v-if="ollamaGpuInfo && !isLoadingOllamaGpuInfo" class="mt-4 p-3 bg-white/5 rounded-lg border border-white/10">
+              <div class="flex items-center gap-2 mb-2">
+                <CpuChipIcon class="w-4 h-4 text-white/60" />
+                <span class="text-sm font-medium text-white/90">
+                  Ollama GPU Acceleration
+                </span>
+              </div>
+              <div v-if="ollamaGpuInfo.gpu_available" class="space-y-1">
+                <div class="text-xs text-white/60">
+                  <span class="font-medium">Type:</span> {{ ollamaGpuInfo.gpu_type }}
+                </div>
+                <div v-if="ollamaGpuInfo.gpu_compute_capability" class="text-xs text-white/60">
+                  <span class="font-medium">Device:</span> {{ ollamaGpuInfo.gpu_compute_capability }}
+                </div>
+                <div v-if="ollamaGpuInfo.gpu_memory" class="text-xs text-white/60">
+                  <span class="font-medium">Memory:</span> {{ Math.round(ollamaGpuInfo.gpu_memory / (1024 * 1024 * 1024)) }}GB
+                </div>
+                <div v-if="ollamaGpuInfo.gpu_type === 'CUDA'" class="text-xs text-green-400/80 mt-2">
+                  ✓ NVIDIA CUDA acceleration enabled - Ollama will use GPU automatically
+                </div>
+                <div v-else-if="ollamaGpuInfo.gpu_type === 'Metal'" class="text-xs text-blue-400/80 mt-2">
+                  ✓ Apple Metal acceleration enabled - Ollama will use GPU automatically
+                </div>
+              </div>
+              <div v-else class="text-xs text-white/50">
+                CPU-only mode - Models will run slower without GPU acceleration
               </div>
             </div>
             
