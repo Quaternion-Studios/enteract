@@ -16,7 +16,6 @@ pub mod quality_filter;
 pub mod settings;
 
 // Re-export main types and functions
-pub use types::{CAPTURE_STATE, CaptureState, AudioLoopbackDevice, DeviceType, LoopbackMethod, AudioDeviceSettings};
 pub use device_enumerator::*;
 pub use capture_engine::*;
 pub use audio_processor::*;

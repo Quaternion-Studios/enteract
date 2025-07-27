@@ -106,6 +106,8 @@ const generalSettings = ref({
   // Whisper model settings
   microphoneWhisperModel: 'tiny',
   loopbackWhisperModel: 'small',
+  // GPU acceleration settings
+  enableGpuAcceleration: true,
   // Transparency settings
   enableTransparency: false,
   defaultTransparencyLevel: 1.0,
@@ -114,6 +116,15 @@ const generalSettings = ref({
 
 // Transparency composable
 const transparency = useTransparency()
+
+// GPU info state
+const gpuInfo = ref<{
+  use_gpu: boolean
+  gpu_device: number | null
+  gpu_type: 'Cuda' | 'Metal' | 'OpenCL' | 'Cpu'
+  gpu_name: string | null
+} | null>(null)
+const isLoadingGpuInfo = ref(false)
 
 // Audio device enumeration functions
 const enumerateAudioDevices = async () => {
@@ -266,6 +277,8 @@ watch(activeTab, async (newTab) => {
     }
   } else if (newTab === 'audio') {
     await enumerateAudioDevices()
+  } else if (newTab === 'general') {
+    await fetchGpuInfo()
   }
 })
 
@@ -286,7 +299,8 @@ watch(generalSettings, (newSettings, oldSettings) => {
   // Check if whisper model settings changed and emit event for reinitialization
   if (oldSettings && (
     newSettings.microphoneWhisperModel !== oldSettings.microphoneWhisperModel ||
-    newSettings.loopbackWhisperModel !== oldSettings.loopbackWhisperModel
+    newSettings.loopbackWhisperModel !== oldSettings.loopbackWhisperModel ||
+    newSettings.enableGpuAcceleration !== oldSettings.enableGpuAcceleration
   )) {
     console.log('🔄 Whisper model settings changed, emitting reinitialize event')
     
@@ -294,7 +308,8 @@ watch(generalSettings, (newSettings, oldSettings) => {
     const reinitializeEvent = new CustomEvent('whisper-models-changed', {
       detail: {
         microphoneModel: newSettings.microphoneWhisperModel,
-        loopbackModel: newSettings.loopbackWhisperModel
+        loopbackModel: newSettings.loopbackWhisperModel,
+        enableGpu: newSettings.enableGpuAcceleration
       }
     })
     window.dispatchEvent(reinitializeEvent)
@@ -326,6 +341,20 @@ const applyTransparencyFromSettings = () => {
     transparency.setLevel(generalSettings.value.defaultTransparencyLevel)
   } else {
     transparency.presets.solid()
+  }
+}
+
+// Fetch GPU information
+const fetchGpuInfo = async () => {
+  isLoadingGpuInfo.value = true
+  try {
+    const info = await invoke<typeof gpuInfo.value>('get_gpu_info')
+    gpuInfo.value = info
+    console.log('🎮 GPU info:', info)
+  } catch (error) {
+    console.error('Failed to get GPU info:', error)
+  } finally {
+    isLoadingGpuInfo.value = false
   }
 }
 
@@ -872,6 +901,59 @@ onMounted(() => {
                 </label>
                 <p class="text-white/60 text-xs mt-1">Model used for system audio loopback transcription. Base is recommended for better accuracy with recorded audio.</p>
               </div>
+              
+              <!-- GPU Acceleration Settings -->
+              <div class="setting-separator"></div>
+              
+              <div class="setting-item">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <label class="setting-label">
+                      <input 
+                        type="checkbox" 
+                        v-model="generalSettings.enableGpuAcceleration"
+                        class="setting-checkbox"
+                      >
+                      <span class="text-white/90">Enable GPU Acceleration</span>
+                    </label>
+                    <p class="text-white/60 text-xs mt-1">
+                      Use GPU for faster whisper transcription when available
+                    </p>
+                  </div>
+                  <div v-if="isLoadingGpuInfo" class="flex items-center">
+                    <div class="loading-spinner"></div>
+                  </div>
+                </div>
+                
+                <!-- GPU Info Display -->
+                <div v-if="gpuInfo && !isLoadingGpuInfo" class="mt-3 p-3 bg-white/5 rounded-lg border border-white/10">
+                  <div class="flex items-center gap-2 mb-2">
+                    <CpuChipIcon class="w-4 h-4 text-white/60" />
+                    <span class="text-sm font-medium text-white/90">
+                      {{ gpuInfo.use_gpu ? 'GPU Detected' : 'No GPU Detected' }}
+                    </span>
+                  </div>
+                  <div v-if="gpuInfo.use_gpu" class="space-y-1">
+                    <div class="text-xs text-white/60">
+                      <span class="font-medium">Type:</span> {{ gpuInfo.gpu_type }}
+                    </div>
+                    <div v-if="gpuInfo.gpu_name" class="text-xs text-white/60">
+                      <span class="font-medium">Device:</span> {{ gpuInfo.gpu_name }}
+                    </div>
+                    <div v-if="gpuInfo.gpu_type === 'Cuda'" class="text-xs text-green-400/80 mt-2">
+                      ✓ NVIDIA CUDA acceleration available
+                    </div>
+                    <div v-else-if="gpuInfo.gpu_type === 'Metal'" class="text-xs text-blue-400/80 mt-2">
+                      ✓ Apple Metal acceleration available
+                    </div>
+                  </div>
+                  <div v-else class="text-xs text-white/50">
+                    CPU-only mode will be used for transcription
+                  </div>
+                </div>
+              </div>
+              
+              <div class="setting-separator"></div>
               
               <div class="setting-item">
                 <label class="setting-label">

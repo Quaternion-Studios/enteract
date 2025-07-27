@@ -24,8 +24,9 @@ use eye_tracking::{
     get_ml_tracking_stats, pause_ml_tracking, resume_ml_tracking, detect_window_drag
 };
 use speech::{
-    initialize_whisper_model, transcribe_audio_base64, transcribe_audio_file,
-    check_whisper_model_availability, download_whisper_model, list_available_models
+    initialize_whisper_model, initialize_whisper_model_with_gpu, transcribe_audio_base64, transcribe_audio_file,
+    check_whisper_model_availability, download_whisper_model, list_available_models,
+    get_gpu_info, get_current_gpu_config
 };
 use ollama::{
     get_ollama_models, get_ollama_status, pull_ollama_model, delete_ollama_model,
@@ -100,11 +101,14 @@ pub fn run() {
             
             // Speech transcription
             initialize_whisper_model,
+            initialize_whisper_model_with_gpu,
             transcribe_audio_base64,
             transcribe_audio_file,
             check_whisper_model_availability,
             download_whisper_model,
             list_available_models,
+            get_gpu_info,
+            get_current_gpu_config,
             
             // Ollama AI
             get_ollama_models,

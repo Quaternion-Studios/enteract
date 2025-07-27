@@ -14,6 +14,11 @@ edition = "2021"
 name = "enteract_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+cuda = ["whisper-rs/cuda"]
+metal = ["whisper-rs/metal"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -27,12 +32,15 @@ tokio = { version = "1", features = ["full"] }
 rand = "0.8"
 
 # Speech transcription dependencies (for wake word detection)
-whisper-rs = "0.12"
+whisper-rs = { version = "0.14", features = [] }
 anyhow = "1.0"
 base64 = "0.22"
 tempfile = "3.0"
 reqwest = { version = "0.11", features = ["stream", "json"] }
 futures-util = "0.3"
+
+# GPU detection libraries
+nvml-wrapper = { version = "0.10", optional = true }
 xcap = "0.6.1"
 image = { version = "0.25", features = ["png"] }
 # File processing dependencies

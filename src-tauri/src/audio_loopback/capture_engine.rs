@@ -199,7 +199,7 @@ fn run_audio_capture_loop_sync(
         let safe_buffer_size = std::cmp::max(calculated_buffer_size, 4096);
         let mut buffer = vec![0u8; safe_buffer_size];
         
-        let (frames_read, flags) = match capture_client.read_from_device(bytes_per_frame as usize, &mut buffer) {
+        let (frames_read, _flags) = match capture_client.read_from_device(bytes_per_frame as usize, &mut buffer) {
             Ok(result) => {
                 if error_count > 0 {
                     error_count = std::cmp::max(0, error_count - 1);
