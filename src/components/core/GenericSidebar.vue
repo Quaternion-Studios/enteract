@@ -170,10 +170,10 @@ const closeMenu = () => {
   <!-- Overlay mode -->
   <div v-if="displayMode === 'overlay'">
     <Transition name="drawer-overlay">
-      <div class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" @click="emit('close')">
+      <div class="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm" @click="emit('close')">
         <Transition name="drawer-slide">
           <div 
-            class="fixed top-0 left-0 h-full w-80 z-50 bg-black/90 backdrop-blur-xl border-r border-white/20 shadow-2xl shadow-black/50 flex flex-col" 
+            class="absolute top-0 left-0 bottom-0 w-80 z-50 bg-black/90 backdrop-blur-xl border-r border-white/20 shadow-2xl shadow-black/50 flex flex-col" 
             @click.stop
           >
             <!-- Sidebar Content -->
@@ -201,7 +201,7 @@ const closeMenu = () => {
               </div>
 
               <!-- Items List -->
-              <div class="flex-1 overflow-y-auto p-2" style="scrollbar-width: thin;" @click="closeMenu">
+              <div class="flex-1 overflow-y-auto p-2" style="scrollbar-width: thin; min-height: 0;" @click="closeMenu">
                 <!-- Loading State -->
                 <div v-if="isLoading" class="flex flex-col items-center justify-center h-full text-center px-6">
                   <div class="w-4 h-4 border-2 border-white/20 border-t-white/60 rounded-full animate-spin mb-2" />
@@ -301,7 +301,7 @@ const closeMenu = () => {
   </div>
 
   <!-- Inline mode -->
-  <div v-else-if="displayMode === 'inline'" :class="[width, 'border-r border-white/10 bg-white/5 backdrop-blur-sm flex flex-col']">
+  <div v-else-if="displayMode === 'inline'" :class="[width, 'h-full border-r border-white/10 bg-white/5 backdrop-blur-sm flex flex-col']">
     <!-- Header -->
     <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
       <div class="flex items-center gap-2">
