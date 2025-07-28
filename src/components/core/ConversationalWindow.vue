@@ -18,7 +18,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 // Components
 import MessageList from '../conversational/MessageList.vue'
-import ConversationSidebar from '../conversational/ConversationSidebar.vue'
+import ConversationSidebarAdapter from '../conversational/ConversationSidebarAdapter.vue'
 import AIAssistant from '../conversational/AIAssistant.vue'
 import LiveAI from '../conversational/LiveAI.vue'
 import ExportControls from '../conversational/ExportControls.vue'
@@ -500,7 +500,7 @@ const formatSessionDuration = () => {
       <!-- Window Content Container -->
       <div class="window-content">
         <!-- Conversation Sidebar -->
-        <ConversationSidebar
+        <ConversationSidebarAdapter
           :show="showConversationSidebar"
           :conversations="allConversations"
           :is-loading="isLoadingConversations"
