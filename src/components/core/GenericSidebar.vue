@@ -167,27 +167,141 @@ const closeMenu = () => {
 </script>
 
 <template>
-  <!-- Overlay mode wrapper -->
-  <Transition v-if="displayMode === 'overlay'" name="overlay">
-    <div v-if="$slots.default" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" @click="emit('close')">
-      <Transition name="slide">
-        <div 
-          :class="[width, 'fixed top-0 left-0 h-full z-50 bg-black/90 backdrop-blur-xl border-r border-white/20 shadow-2xl shadow-black/50 flex flex-col']" 
-          @click.stop
-        >
-          <slot />
-        </div>
-      </Transition>
-    </div>
-  </Transition>
+  <!-- Overlay mode -->
+  <div v-if="displayMode === 'overlay'">
+    <Transition name="drawer-overlay">
+      <div class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" @click="emit('close')">
+        <Transition name="drawer-slide">
+          <div 
+            class="fixed top-0 left-0 h-full w-80 z-50 bg-black/90 backdrop-blur-xl border-r border-white/20 shadow-2xl shadow-black/50 flex flex-col" 
+            @click.stop
+          >
+            <!-- Sidebar Content -->
+            <div class="flex flex-col h-full">
+              <!-- Header -->
+              <div class="flex items-center justify-between p-4 border-b border-white/10">
+                <div class="flex items-center gap-2">
+                  <component :is="icon" v-if="icon" :class="['w-4 h-4', 'text-white/80']" />
+                  <span class="text-sm font-medium text-white/90">{{ title }}</span>
+                </div>
+                <button @click="emit('close')" class="p-1 rounded-md hover:bg-white/10 transition-colors">
+                  <XMarkIcon class="w-4 h-4 text-white/70 hover:text-white transition-colors" />
+                </button>
+              </div>
 
-  <!-- Inline mode wrapper -->
-  <div v-else-if="displayMode === 'inline'" :class="[width, 'border-r border-white/10 bg-white/5 backdrop-blur-sm flex flex-col']">
-    <slot />
+              <!-- New Item Button -->
+              <div v-if="showNewButton" class="p-3 border-b border-white/10">
+                <button 
+                  @click="emit('new-item')" 
+                  :class="['w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm font-medium text-white/90', themeClasses.button]"
+                >
+                  <PlusIcon class="w-4 h-4" />
+                  <span>New {{ title.replace(/s$/, '') }}</span>
+                </button>
+              </div>
+
+              <!-- Items List -->
+              <div class="flex-1 overflow-y-auto p-2" style="scrollbar-width: thin;" @click="closeMenu">
+                <!-- Loading State -->
+                <div v-if="isLoading" class="flex flex-col items-center justify-center h-full text-center px-6">
+                  <div class="w-4 h-4 border-2 border-white/20 border-t-white/60 rounded-full animate-spin mb-2" />
+                  <span class="text-xs text-white/60">Loading...</span>
+                </div>
+
+                <!-- Empty State -->
+                <div v-else-if="items.length === 0" class="flex flex-col items-center justify-center h-full text-center px-6">
+                  <component :is="icon" v-if="icon" class="w-8 h-8 text-white/30 mb-2" />
+                  <p class="text-white/50 text-sm">{{ emptyMessage }}</p>
+                  <p v-if="emptySubMessage" class="text-white/40 text-xs">{{ emptySubMessage }}</p>
+                </div>
+
+                <!-- Items -->
+                <div v-else class="space-y-1">
+                  <div 
+                    v-for="item in sortedItems" 
+                    :key="item.id"
+                    class="flex items-center gap-3 p-3 mx-1 rounded-lg hover:bg-white/5 cursor-pointer transition-colors border border-transparent"
+                    :class="{ 'bg-blue-600/20 border-blue-500/30': item.id === currentItemId || item.isActive }"
+                    @click="handleSelectItem(item.id)"
+                  >
+                    <div class="flex-1 min-w-0">
+                      <!-- Title (with rename functionality) -->
+                      <div v-if="renamingItemId === item.id" class="w-full">
+                        <input
+                          v-model="newItemTitle"
+                          @keyup.enter="finishRenaming"
+                          @keyup.escape="cancelRenaming"
+                          @blur="finishRenaming"
+                          @click.stop
+                          class="w-full px-2 py-1 text-sm bg-white/10 border border-white/20 rounded text-white/90 focus:outline-none focus:border-blue-500/50"
+                          autofocus
+                        />
+                      </div>
+                      <div v-else class="text-sm font-medium text-white/90 truncate">
+                        {{ item.title }}
+                      </div>
+                      
+                      <!-- Metadata -->
+                      <div v-if="showTimestamps || showMetadata" class="flex items-center gap-1 mt-1">
+                        <ClockIcon v-if="showTimestamps" class="w-3 h-3 text-white/40" />
+                        <span v-if="showTimestamps" class="text-xs text-white/40">{{ formatTimestamp(item.timestamp) }}</span>
+                        <span v-if="showMetadata && item.subtitle" class="text-xs text-white/30">• {{ item.subtitle }}</span>
+                      </div>
+                    </div>
+
+                    <!-- Actions Menu -->
+                    <div class="relative" @click.stop>
+                      <button 
+                        @click="toggleMenu(item.id)" 
+                        class="p-1 rounded hover:bg-white/10 transition-colors text-white/60 hover:text-white/90"
+                        :class="{ 'bg-white/10 text-white/90': showMenuForItem === item.id }"
+                      >
+                        <EllipsisVerticalIcon class="w-4 h-4" />
+                      </button>
+
+                      <!-- Dropdown Menu -->
+                      <div v-if="showMenuForItem === item.id" class="absolute right-0 top-8 bg-black/95 border border-white/20 rounded-lg shadow-xl z-50 py-1 min-w-32">
+                        <button 
+                          v-if="showRenameButton"
+                          @click="startRenaming(item)" 
+                          class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/10 transition-colors text-white/80 hover:text-white/90"
+                        >
+                          <PencilIcon class="w-3 h-3" />
+                          <span>Rename</span>
+                        </button>
+                        <button 
+                          v-if="showDeleteButton"
+                          @click="(e) => handleDeleteItem(item.id, e)" 
+                          class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-white/10 transition-colors text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                        >
+                          <TrashIcon class="w-3 h-3" />
+                          <span>Delete</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Footer (optional) -->
+              <div v-if="showClearAllButton && items.length > 0" class="p-3 border-t border-white/10">
+                <button 
+                  @click="emit('clear-all')" 
+                  class="w-full flex items-center justify-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/80 rounded-lg transition-colors text-sm font-medium border border-white/10"
+                >
+                  <TrashIcon class="w-4 h-4" />
+                  <span>Clear All</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </Transition>
+      </div>
+    </Transition>
   </div>
 
-  <!-- Default slot content (header, content, footer) -->
-  <template v-if="!$slots.default">
+  <!-- Inline mode -->
+  <div v-else-if="displayMode === 'inline'" :class="[width, 'border-r border-white/10 bg-white/5 backdrop-blur-sm flex flex-col']">
     <!-- Header -->
     <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
       <div class="flex items-center gap-2">
@@ -311,9 +425,6 @@ const closeMenu = () => {
               <div v-if="showMetadata && item.metadata?.preview" class="text-xs text-white/60 line-clamp-2">
                 {{ item.metadata.preview }}
               </div>
-
-              <!-- Custom metadata slot -->
-              <slot name="item-metadata" :item="item" />
             </div>
           </div>
         </div>
@@ -330,29 +441,29 @@ const closeMenu = () => {
         </button>
       </div>
     </div>
-  </template>
+  </div>
 </template>
 
 <style scoped>
-/* Overlay transitions */
-.overlay-enter-active,
-.overlay-leave-active {
+/* Drawer overlay transitions */
+.drawer-overlay-enter-active,
+.drawer-overlay-leave-active {
   transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.overlay-enter-from,
-.overlay-leave-to {
+.drawer-overlay-enter-from,
+.drawer-overlay-leave-to {
   opacity: 0;
 }
 
-/* Slide transitions */
-.slide-enter-active,
-.slide-leave-active {
+/* Drawer slide transitions */
+.drawer-slide-enter-active,
+.drawer-slide-leave-active {
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.slide-enter-from,
-.slide-leave-to {
+.drawer-slide-enter-from,
+.drawer-slide-leave-to {
   transform: translateX(-100%);
 }
 
@@ -372,7 +483,7 @@ const closeMenu = () => {
   transform: translateY(-4px) scale(0.95);
 }
 
-/* Scrollbar styling */
+/* Custom scrollbar for webkit browsers */
 .overflow-y-auto::-webkit-scrollbar {
   width: 4px;
 }
