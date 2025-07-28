@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useWindowManager } from './composables/useWindowManager'
 import { useAIModels } from './composables/useAIModels'
 import ControlPanel from './components/core/ControlPanel.vue'
-import ChatSidebar from './components/core/ChatSidebar.vue'
+import ChatSidebarAdapter from './components/core/ChatSidebarAdapter.vue'
 
 // Initialize window manager
 const { initializeWindow } = useWindowManager()
@@ -51,7 +51,7 @@ onMounted(() => {
     />
     
     <!-- Chat Drawer -->
-    <ChatSidebar 
+    <ChatSidebarAdapter 
       :is-open="isChatDrawerOpen"
       :selected-model="selectedModel"
       @close="closeChatDrawer"
