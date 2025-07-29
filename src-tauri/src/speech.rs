@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use std::time::{Duration, Instant};
 
 // Whisper-rs imports for transcription
 use std::path::PathBuf;
@@ -7,6 +8,7 @@ use base64::{Engine as _, engine::general_purpose};
 use tempfile::NamedTempFile;
 use anyhow::Result;
 use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
+use tokio::time::timeout;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AudioConfig {
@@ -73,10 +75,93 @@ pub struct TranscriptionResult {
     pub language: Option<String>,
 }
 
+// Cancellation tokens for instant shutdown
+lazy_static::lazy_static! {
+    pub static ref MICROPHONE_CANCEL_TOKEN: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    pub static ref LOOPBACK_CANCEL_TOKEN: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    pub static ref GLOBAL_CANCEL_TOKEN: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+}
+
+// Model-specific timeout configurations
+#[derive(Debug, Clone)]
+pub struct ModelTimeoutConfig {
+    pub graceful_shutdown_timeout: Duration,
+    pub force_termination_timeout: Duration,
+    pub transcription_timeout: Duration,
+}
+
+impl ModelTimeoutConfig {
+    pub fn for_model(model_size: &str) -> Self {
+        match model_size {
+            "tiny" => Self {
+                graceful_shutdown_timeout: Duration::from_secs(2),
+                force_termination_timeout: Duration::from_secs(3),
+                transcription_timeout: Duration::from_secs(5),
+            },
+            "base" => Self {
+                graceful_shutdown_timeout: Duration::from_secs(3),
+                force_termination_timeout: Duration::from_secs(5),
+                transcription_timeout: Duration::from_secs(10),
+            },
+            "small" => Self {
+                graceful_shutdown_timeout: Duration::from_secs(5),
+                force_termination_timeout: Duration::from_secs(8),
+                transcription_timeout: Duration::from_secs(15),
+            },
+            "medium" => Self {
+                graceful_shutdown_timeout: Duration::from_secs(8),
+                force_termination_timeout: Duration::from_secs(12),
+                transcription_timeout: Duration::from_secs(20),
+            },
+            "large" => Self {
+                graceful_shutdown_timeout: Duration::from_secs(10),
+                force_termination_timeout: Duration::from_secs(15),
+                transcription_timeout: Duration::from_secs(30),
+            },
+            _ => Self::for_model("tiny"), // Default to tiny for unknown models
+        }
+    }
+}
+
+// Enhanced whisper context with cancellation support
+pub struct CancellableWhisperContext {
+    pub context: Option<WhisperContext>,
+    pub model_size: String,
+    pub cancel_token: Arc<AtomicBool>,
+    pub timeout_config: ModelTimeoutConfig,
+    pub is_processing: Arc<AtomicBool>,
+}
+
+impl CancellableWhisperContext {
+    pub fn new(model_size: String, cancel_token: Arc<AtomicBool>) -> Self {
+        Self {
+            context: None,
+            timeout_config: ModelTimeoutConfig::for_model(&model_size),
+            model_size,
+            cancel_token,
+            is_processing: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_token.load(Ordering::Relaxed) || GLOBAL_CANCEL_TOKEN.load(Ordering::Relaxed)
+    }
+    
+    pub fn cancel(&self) {
+        self.cancel_token.store(true, Ordering::Relaxed);
+    }
+    
+    pub fn reset_cancel(&self) {
+        self.cancel_token.store(false, Ordering::Relaxed);
+    }
+}
+
 // Global whisper contexts for separate microphone and loopback systems
 lazy_static::lazy_static! {
-    pub static ref WHISPER_CONTEXT_MIC: Arc<Mutex<Option<WhisperContext>>> = Arc::new(Mutex::new(None));
-    pub static ref WHISPER_CONTEXT_LOOPBACK: Arc<Mutex<Option<WhisperContext>>> = Arc::new(Mutex::new(None));
+    pub static ref WHISPER_CONTEXT_MIC: Arc<Mutex<CancellableWhisperContext>> = 
+        Arc::new(Mutex::new(CancellableWhisperContext::new("tiny".to_string(), MICROPHONE_CANCEL_TOKEN.clone())));
+    pub static ref WHISPER_CONTEXT_LOOPBACK: Arc<Mutex<CancellableWhisperContext>> = 
+        Arc::new(Mutex::new(CancellableWhisperContext::new("tiny".to_string(), LOOPBACK_CANCEL_TOKEN.clone())));
     pub static ref WHISPER_CONTEXT: Arc<Mutex<Option<WhisperContext>>> = Arc::new(Mutex::new(None));
     static ref MODEL_CACHE_DIR: PathBuf = {
         let mut cache_dir = std::env::temp_dir();
@@ -318,6 +403,68 @@ fn load_audio_file(file_path: &str) -> Result<Vec<f32>, String> {
     Ok(audio_f32)
 }
 
+// Instant cancellation commands
+#[tauri::command]
+pub async fn cancel_microphone_transcription() -> Result<String, String> {
+    MICROPHONE_CANCEL_TOKEN.store(true, Ordering::Relaxed);
+    println!("🛑 Microphone transcription cancellation requested");
+    Ok("Microphone transcription cancelled".to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_loopback_transcription() -> Result<String, String> {
+    LOOPBACK_CANCEL_TOKEN.store(true, Ordering::Relaxed);
+    println!("🛑 Loopback transcription cancellation requested");
+    Ok("Loopback transcription cancelled".to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_all_transcriptions() -> Result<String, String> {
+    GLOBAL_CANCEL_TOKEN.store(true, Ordering::Relaxed);
+    MICROPHONE_CANCEL_TOKEN.store(true, Ordering::Relaxed);
+    LOOPBACK_CANCEL_TOKEN.store(true, Ordering::Relaxed);
+    println!("🛑 All transcriptions cancellation requested");
+    Ok("All transcriptions cancelled".to_string())
+}
+
+#[tauri::command]
+pub async fn reset_cancellation_tokens() -> Result<String, String> {
+    GLOBAL_CANCEL_TOKEN.store(false, Ordering::Relaxed);
+    MICROPHONE_CANCEL_TOKEN.store(false, Ordering::Relaxed);
+    LOOPBACK_CANCEL_TOKEN.store(false, Ordering::Relaxed);
+    println!("🔄 Cancellation tokens reset");
+    Ok("Cancellation tokens reset".to_string())
+}
+
+// Progressive cleanup with fallback mechanisms
+#[tauri::command]
+pub async fn emergency_shutdown_whisper() -> Result<String, String> {
+    println!("🚨 Emergency whisper shutdown initiated");
+    
+    // Phase 1: Send cancellation signals
+    GLOBAL_CANCEL_TOKEN.store(true, Ordering::Relaxed);
+    MICROPHONE_CANCEL_TOKEN.store(true, Ordering::Relaxed);
+    LOOPBACK_CANCEL_TOKEN.store(true, Ordering::Relaxed);
+    
+    // Phase 2: Force cleanup with timeout
+    let cleanup_result = timeout(Duration::from_secs(5), async {
+        cleanup_all_whisper_contexts().await
+    }).await;
+    
+    match cleanup_result {
+        Ok(_) => {
+            println!("✅ Emergency shutdown completed successfully");
+            Ok("Emergency shutdown completed".to_string())
+        },
+        Err(_) => {
+            // Phase 3: Force reset all contexts
+            force_cleanup_whisper_contexts().await?;
+            println!("✅ Emergency shutdown completed with force cleanup");
+            Ok("Emergency shutdown completed with force cleanup".to_string())
+        }
+    }
+}
+
 // Whisper cleanup functions for proper context termination
 #[tauri::command]
 pub async fn cleanup_whisper_context() -> Result<String, String> {
@@ -327,37 +474,55 @@ pub async fn cleanup_whisper_context() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn cleanup_whisper_microphone_context() -> Result<String, String> {
-    cleanup_whisper_context_internal(&WHISPER_CONTEXT_MIC)
+    cleanup_cancellable_whisper_context(&WHISPER_CONTEXT_MIC)
         .map(|_| "Microphone Whisper context cleaned up successfully".to_string())
 }
 
 #[tauri::command]
 pub async fn cleanup_whisper_loopback_context() -> Result<String, String> {
-    cleanup_whisper_context_internal(&WHISPER_CONTEXT_LOOPBACK)
+    cleanup_cancellable_whisper_context(&WHISPER_CONTEXT_LOOPBACK)
         .map(|_| "Loopback Whisper context cleaned up successfully".to_string())
 }
 
 #[tauri::command]
 pub async fn cleanup_all_whisper_contexts() -> Result<String, String> {
     let mut results = Vec::new();
-    
-    // Cleanup all contexts in parallel with timeout handling
-    let cleanup_tasks = vec![
-        cleanup_whisper_context_internal(&WHISPER_CONTEXT),
-        cleanup_whisper_context_internal(&WHISPER_CONTEXT_MIC),
-        cleanup_whisper_context_internal(&WHISPER_CONTEXT_LOOPBACK),
-    ];
-    
     let mut success_count = 0;
     let mut error_count = 0;
     
-    for result in cleanup_tasks {
-        match result {
-            Ok(_) => success_count += 1,
-            Err(e) => {
-                error_count += 1;
-                results.push(format!("Error: {}", e));
-            }
+    // Cleanup main context
+    match cleanup_whisper_context_internal(&WHISPER_CONTEXT) {
+        Ok(_) => {
+            success_count += 1;
+            results.push("Main context cleaned".to_string());
+        },
+        Err(e) => {
+            error_count += 1;
+            results.push(format!("Main context error: {}", e));
+        }
+    }
+    
+    // Cleanup microphone context
+    match cleanup_cancellable_whisper_context(&WHISPER_CONTEXT_MIC) {
+        Ok(_) => {
+            success_count += 1;
+            results.push("Microphone context cleaned".to_string());
+        },
+        Err(e) => {
+            error_count += 1;
+            results.push(format!("Microphone context error: {}", e));
+        }
+    }
+    
+    // Cleanup loopback context
+    match cleanup_cancellable_whisper_context(&WHISPER_CONTEXT_LOOPBACK) {
+        Ok(_) => {
+            success_count += 1;
+            results.push("Loopback context cleaned".to_string());
+        },
+        Err(e) => {
+            error_count += 1;
+            results.push(format!("Loopback context error: {}", e));
         }
     }
     
@@ -409,6 +574,58 @@ fn cleanup_whisper_context_internal(context: &Arc<Mutex<Option<WhisperContext>>>
     }
 }
 
+// Cleanup function for cancellable whisper contexts
+fn cleanup_cancellable_whisper_context(context: &Arc<Mutex<CancellableWhisperContext>>) -> Result<(), String> {
+    let start_time = Instant::now();
+    let timeout = Duration::from_secs(10); // Longer timeout for cancellable contexts
+    
+    loop {
+        if start_time.elapsed() > timeout {
+            return Err("Timeout while trying to acquire cancellable Whisper context lock".to_string());
+        }
+        
+        match context.try_lock() {
+            Ok(mut whisper_ctx) => {
+                // First, signal cancellation
+                whisper_ctx.cancel();
+                
+                // Wait for any ongoing processing to stop
+                let processing_timeout = whisper_ctx.timeout_config.graceful_shutdown_timeout;
+                let processing_start = Instant::now();
+                
+                while whisper_ctx.is_processing.load(Ordering::Relaxed) && 
+                      processing_start.elapsed() < processing_timeout {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                
+                if whisper_ctx.context.is_some() {
+                    println!("🧹 Cleaning up cancellable Whisper context (model: {})...", whisper_ctx.model_size);
+                    
+                    // Drop the context to free memory and resources
+                    whisper_ctx.context = None;
+                    
+                    // Reset processing flag
+                    whisper_ctx.is_processing.store(false, Ordering::Relaxed);
+                    
+                    println!("✅ Cancellable Whisper context cleaned up successfully");
+                    return Ok(());
+                } else {
+                    println!("ℹ️ Cancellable Whisper context already cleaned up");
+                    return Ok(());
+                }
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                // Context is locked, wait a bit and try again
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            Err(e) => {
+                return Err(format!("Failed to acquire cancellable Whisper context lock: {}", e));
+            }
+        }
+    }
+}
+
 // Force cleanup with emergency termination
 #[tauri::command]
 pub async fn force_cleanup_whisper_contexts() -> Result<String, String> {
@@ -416,21 +633,32 @@ pub async fn force_cleanup_whisper_contexts() -> Result<String, String> {
     
     let mut cleanup_results = Vec::new();
     
-    // Force cleanup each context individually
+    // Force cleanup main context
     if let Ok(mut ctx) = WHISPER_CONTEXT.try_lock() {
         *ctx = None;
         cleanup_results.push("Main context");
     }
     
+    // Force cleanup microphone context
     if let Ok(mut ctx) = WHISPER_CONTEXT_MIC.try_lock() {
-        *ctx = None;
+        ctx.cancel();
+        ctx.context = None;
+        ctx.is_processing.store(false, Ordering::Relaxed);
         cleanup_results.push("Microphone context");
     }
     
+    // Force cleanup loopback context
     if let Ok(mut ctx) = WHISPER_CONTEXT_LOOPBACK.try_lock() {
-        *ctx = None;
+        ctx.cancel();
+        ctx.context = None;
+        ctx.is_processing.store(false, Ordering::Relaxed);
         cleanup_results.push("Loopback context");
     }
+    
+    // Reset all cancellation tokens
+    GLOBAL_CANCEL_TOKEN.store(false, Ordering::Relaxed);
+    MICROPHONE_CANCEL_TOKEN.store(false, Ordering::Relaxed);
+    LOOPBACK_CANCEL_TOKEN.store(false, Ordering::Relaxed);
     
     println!("✅ Force cleanup completed for: {:?}", cleanup_results);
     Ok(format!("Force cleaned up {} Whisper contexts: {:?}", cleanup_results.len(), cleanup_results))

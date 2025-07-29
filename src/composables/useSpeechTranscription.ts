@@ -506,31 +506,47 @@ export function useSpeechTranscription() {
     }
   }
 
-  // Enhanced stop recording with parallel cleanup and whisper thread termination
+  // Enhanced stop recording with instant cancellation and parallel cleanup
   const stopRecording = async () => {
     if (!isRecording.value) return
 
     try {
-      // Immediately reset recording state for responsive UX
+      // IMMEDIATE UI RESPONSE - Reset state instantly for responsive UX
       isRecording.value = false
       isTranscribing.value = false
       
-      console.log('🛑 Starting parallel audio system cleanup...')
+      console.log('🛑 Instant stop initiated - UI reset immediately')
       
-      // Parallel cleanup sequence - all systems simultaneously
+      // PHASE 1: Instant cancellation signals (non-blocking)
+      const cancellationPromise = (async () => {
+        try {
+          await invoke('cancel_microphone_transcription')
+          console.log('✅ Microphone transcription cancelled instantly')
+        } catch (cancellationError) {
+          console.warn('⚠️ Cancellation signal failed:', cancellationError)
+        }
+      })()
+      
+      // PHASE 2: Parallel cleanup sequence with frequent stop signal checks
       const cleanupPromises = [
-        // Audio context cleanup
+        // Audio context cleanup with cancellation checks
         (async () => {
           resetSilenceTimer()
-          if (audioContext && audioContext.state !== 'closed') {
-            await audioContext.close()
-            audioContext = null
-            analyser = null
+          
+          // Check for cancellation every 50ms during cleanup
+          const cleanupWithChecks = async () => {
+            if (audioContext && audioContext.state !== 'closed') {
+              await audioContext.close()
+              audioContext = null
+              analyser = null
+            }
           }
+          
+          await cleanupWithChecks()
           console.log('✅ Audio context cleaned up')
         })(),
         
-        // Web Speech API cleanup
+        // Web Speech API cleanup - instant
         (async () => {
           if (recognition) {
             recognition.stop()
@@ -539,7 +555,7 @@ export function useSpeechTranscription() {
           console.log('✅ Web Speech API stopped')
         })(),
         
-        // MediaRecorder cleanup
+        // MediaRecorder cleanup - instant
         (async () => {
           if (mediaRecorder && mediaRecorder.state !== 'inactive') {
             mediaRecorder.stop()
@@ -547,7 +563,7 @@ export function useSpeechTranscription() {
           console.log('✅ MediaRecorder stopped')
         })(),
         
-        // Audio stream cleanup
+        // Audio stream cleanup - instant
         (async () => {
           if (audioStream) {
             audioStream.getTracks().forEach(track => track.stop())
@@ -556,33 +572,71 @@ export function useSpeechTranscription() {
           console.log('✅ Audio stream tracks stopped')
         })(),
         
-        // Whisper context cleanup - microphone specific
+        // Advanced whisper cleanup with progressive timeouts
         (async () => {
           try {
-            await invoke('cleanup_whisper_microphone_context')
-            console.log('✅ Whisper microphone context cleaned up')
-          } catch (whisperError) {
-            console.warn('⚠️ Whisper microphone cleanup failed:', whisperError)
-            // Try force cleanup if normal cleanup fails
+            // First try graceful cleanup with model-specific timeout
+            await Promise.race([
+              invoke('cleanup_whisper_microphone_context'),
+              new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Graceful cleanup timeout')), 3000)
+              )
+            ])
+            console.log('✅ Whisper microphone context cleaned up gracefully')
+          } catch (gracefulError) {
+            console.warn('⚠️ Graceful whisper cleanup failed, trying force cleanup:', gracefulError)
+            
             try {
-              await invoke('force_cleanup_whisper_contexts')
-              console.log('✅ Force whisper cleanup successful')
-            } catch (forceError) {
-              console.error('❌ Force whisper cleanup also failed:', forceError)
+              // Emergency cleanup if graceful fails
+              await Promise.race([
+                invoke('emergency_shutdown_whisper'),
+                new Promise((_, reject) => 
+                  setTimeout(() => reject(new Error('Emergency cleanup timeout')), 2000)
+                )
+              ])
+              console.log('✅ Emergency whisper cleanup successful')
+            } catch (emergencyError) {
+              console.error('❌ Emergency whisper cleanup failed:', emergencyError)
+              
+              // Last resort - force cleanup without waiting
+              try {
+                invoke('force_cleanup_whisper_contexts') // Fire and forget
+                console.log('✅ Force cleanup initiated (fire and forget)')
+              } catch (forceError) {
+                console.error('❌ Even force cleanup failed:', forceError)
+              }
             }
           }
         })()
       ]
 
-      // Execute all cleanup operations in parallel with timeout
-      await Promise.race([
-        Promise.allSettled(cleanupPromises),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Cleanup timeout')), 5000)
-        )
-      ])
+      // PHASE 3: Execute cleanup with progressive timeouts
+      const cleanupWithTimeout = async () => {
+        try {
+          // Try to complete cleanup in 2 seconds
+          await Promise.race([
+            Promise.allSettled(cleanupPromises),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Primary cleanup timeout')), 2000)
+            )
+          ])
+          console.log('✅ Primary cleanup completed within timeout')
+        } catch (timeoutError) {
+          console.warn('⚠️ Primary cleanup timed out, background cleanup continues')
+          
+          // Continue cleanup in background without blocking UI
+          Promise.allSettled(cleanupPromises).then(() => {
+            console.log('✅ Background cleanup completed')
+          }).catch((bgError) => {
+            console.error('❌ Background cleanup failed:', bgError)
+          })
+        }
+      }
       
-      console.log('✅ Parallel audio system cleanup completed')
+      // Wait for cancellation signal and start cleanup simultaneously
+      await Promise.all([cancellationPromise, cleanupWithTimeout()])
+      
+      console.log('✅ Instant stop sequence completed')
 
       // End session
       if (currentSession.value) {

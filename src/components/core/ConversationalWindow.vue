@@ -60,6 +60,7 @@ const conversationalWindowRef = ref<HTMLElement>()
 const audioLoopbackDeviceId = ref<string | null>(null)
 const selectedMessages = ref<Set<string>>(new Set())
 const showExportControls = ref(false)
+const isSaving = ref(false) // Visual indicator for save operations
 
 // Sidebar and panel states
 const showConversationSidebar = ref(false)
@@ -321,53 +322,153 @@ const stopAudioLoopbackCapture = async () => {
   }
 }
 
-// Enhanced microphone toggle with improved stop behavior
+// Ultra-responsive microphone toggle with instant shutdown
 const toggleMicrophone = async () => {
   if (isRecording.value) {
-    // A. Immediate state reset for responsive UI
-    console.log('🛑 Stopping conversation - immediate UI reset')
-    
-    // Show "Saving..." visual feedback
-    const savingIndicator = ref(true)
+    // INSTANT UI RESPONSE - Reset button state immediately (under 50ms)
+    console.log('🛑 INSTANT STOP - UI reset immediately for maximum responsiveness')
     
     try {
-      // B. Parallel cleanup sequence - stop both systems simultaneously
-      const cleanupPromises = [
-        stopRecording().catch(err => console.error('❌ Microphone cleanup failed:', err)),
-        stopAudioLoopbackCapture().catch(err => console.error('❌ Loopback cleanup failed:', err))
-      ]
-      
-      await Promise.allSettled(cleanupPromises)
-      console.log('✅ Audio systems stopped in parallel')
-      
-      if (conversationStore.currentSession) {
-        const sessionId = conversationStore.currentSession.id
-        console.log('💾 Force saving session immediately:', sessionId)
-        
-        // C. Force immediate save with no delay
-        await conversationStore.endSession()
-        console.log('🏁 ConversationalWindow: Session ended and saved:', sessionId)
-        
-        // D. Refresh conversation list to show the newly ended session
-        await loadConversations()
-        console.log('📁 ConversationalWindow: Conversations refreshed, count:', allConversations.value.length)
+      // PHASE 1: Immediate cancellation signals (fire and forget - non-blocking)
+      const instantCancellation = async () => {
+        try {
+          // Send cancellation signals in parallel without waiting
+          await Promise.all([
+            invoke('cancel_microphone_transcription').catch(console.warn),
+            invoke('cancel_loopback_transcription').catch(console.warn)
+          ])
+          console.log('✅ Instant cancellation signals sent')
+        } catch (error) {
+          console.warn('⚠️ Cancellation signals failed, but continuing:', error)
+        }
       }
+      
+      // Start cancellation immediately (non-blocking)
+      instantCancellation()
+      
+      // PHASE 2: Background cleanup with progressive timeouts
+      const backgroundCleanup = async () => {
+        console.log('🧹 Starting background cleanup...')
+        
+        // Progressive cleanup with model-aware timeouts
+        const cleanupTasks = [
+          // Audio systems cleanup (should be fast)
+          (async () => {
+            try {
+              await Promise.race([
+                Promise.allSettled([
+                  stopRecording(),
+                  stopAudioLoopbackCapture()
+                ]),
+                new Promise((_, reject) => 
+                  setTimeout(() => reject(new Error('Audio cleanup timeout')), 2000)
+                )
+              ])
+              console.log('✅ Audio systems cleaned up')
+            } catch (audioError) {
+              console.warn('⚠️ Audio cleanup timeout, force stopping:', audioError)
+              // Force reset audio state even if cleanup fails
+              isRecording.value = false
+              conversationStore.setAudioLoopbackState(false)
+            }
+          })(),
+          
+          // Session save (critical - must complete)
+          (async () => {
+            if (conversationStore.currentSession) {
+              const sessionId = conversationStore.currentSession.id
+              console.log('💾 Critical: Force saving session:', sessionId)
+              
+              // Show saving indicator
+              isSaving.value = true
+              
+              try {
+                await Promise.race([
+                  conversationStore.endSession(),
+                  new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Session save timeout')), 5000)
+                  )
+                ])
+                console.log('✅ Session saved successfully')
+                
+                // Refresh conversations in background (non-critical)
+                loadConversations().catch(console.warn)
+                
+              } catch (saveError) {
+                console.error('❌ Critical: Session save failed:', saveError)
+                // Try emergency save
+                try {
+                  await conversationStore.endSession()
+                  console.log('✅ Emergency session save successful')
+                } catch (emergencyError) {
+                  console.error('❌ Emergency session save also failed:', emergencyError)
+                }
+              } finally {
+                // Hide saving indicator
+                isSaving.value = false
+              }
+            }
+          })()
+        ]
+        
+        // Execute all cleanup tasks with overall timeout
+        try {
+          await Promise.race([
+            Promise.allSettled(cleanupTasks),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Overall cleanup timeout')), 8000)
+            )
+          ])
+          console.log('✅ Background cleanup completed successfully')
+        } catch (overallTimeout) {
+          console.warn('⚠️ Background cleanup timed out, emergency protocol:', overallTimeout)
+          
+          // Emergency protocol - reset everything
+          try {
+            await invoke('emergency_shutdown_whisper')
+            isRecording.value = false
+            conversationStore.setAudioLoopbackState(false)
+            console.log('✅ Emergency protocol completed')
+          } catch (emergencyError) {
+            console.error('❌ Emergency protocol failed:', emergencyError)
+            // Last resort - force reset UI state
+            isRecording.value = false
+            conversationStore.setAudioLoopbackState(false)
+          }
+        }
+      }
+      
+      // Start background cleanup immediately (don't wait for it)
+      backgroundCleanup()
+      
+      // PHASE 3: Show instant feedback to user
+      console.log('✅ Instant stop completed - user sees immediate response')
       
     } catch (error) {
-      console.error('❌ Error during stop sequence:', error)
-      // Ensure cleanup happens even if save fails
-      if (isRecording.value) {
-        await stopRecording().catch(console.error)
+      console.error('❌ Error in instant stop sequence:', error)
+      
+      // Emergency fallback - ensure UI is responsive
+      isRecording.value = false
+      conversationStore.setAudioLoopbackState(false)
+      
+      // Try emergency shutdown
+      try {
+        await invoke('emergency_shutdown_whisper')
+        console.log('✅ Emergency fallback completed')
+      } catch (emergencyError) {
+        console.error('❌ Emergency fallback failed:', emergencyError)
       }
-      if (isAudioLoopbackActive.value) {
-        await stopAudioLoopbackCapture().catch(console.error)
-      }
-    } finally {
-      savingIndicator.value = false
     }
     
   } else {
-    // Starting recording
+    // Starting recording - reset cancellation tokens first
+    try {
+      await invoke('reset_cancellation_tokens')
+      console.log('🔄 Cancellation tokens reset for new session')
+    } catch (resetError) {
+      console.warn('⚠️ Failed to reset cancellation tokens:', resetError)
+    }
+    
     if (!conversationStore.currentSession) {
       const session = conversationStore.createSession()
       console.log('🆕 ConversationalWindow: Created new session:', session.id)
@@ -375,13 +476,15 @@ const toggleMicrophone = async () => {
       console.log('🔄 ConversationalWindow: Using existing session:', conversationStore.currentSession.id)
     }
     
-    // Start both systems in parallel
+    // Start both systems in parallel with error handling
     const startPromises = [
-      startRecording()
+      startRecording().catch(err => console.error('❌ Microphone start failed:', err))
     ]
     
     if (audioLoopbackDeviceId.value) {
-      startPromises.push(startAudioLoopbackCapture())
+      startPromises.push(
+        startAudioLoopbackCapture().catch(err => console.error('❌ Loopback start failed:', err))
+      )
     }
     
     await Promise.allSettled(startPromises)
@@ -496,49 +599,97 @@ const toggleLiveAIActive = async () => {
   }
 }
 
-// Enhanced close window with complete cleanup
+// Instant-response window close with background cleanup
 const closeWindow = async () => {
   try {
-    console.log('🚪 Closing conversational window with full cleanup...')
+    console.log('🚪 INSTANT CLOSE - Window closing immediately with background cleanup')
     
+    // IMMEDIATE WINDOW CLOSE - Don't wait for cleanup
+    emit('close')
+    emit('update:showConversationalWindow', false)
+    console.log('✅ Window closed instantly for user')
+    
+    // Background cleanup after window is closed
     if (isRecording.value || isAudioLoopbackActive.value) {
-      // Parallel cleanup of all systems
-      const cleanupPromises = []
+      console.log('🧹 Starting background cleanup after window close...')
       
-      if (isRecording.value) {
-        cleanupPromises.push(stopRecording().catch(err => 
-          console.error('❌ Microphone cleanup during window close failed:', err)
-        ))
-      }
-      
-      if (isAudioLoopbackActive.value) {
-        cleanupPromises.push(stopAudioLoopbackCapture().catch(err => 
-          console.error('❌ Loopback cleanup during window close failed:', err)
-        ))
-      }
-      
-      // Wait for cleanup with timeout
-      await Promise.race([
-        Promise.allSettled(cleanupPromises),
-        new Promise(resolve => setTimeout(resolve, 2000)) // 2 second timeout
-      ])
-      
-      // Force cleanup all whisper contexts on window close
+      // Send instant cancellation signals
       try {
-        await invoke('cleanup_all_whisper_contexts')
-        console.log('✅ All whisper contexts cleaned up on window close')
-      } catch (whisperError) {
-        console.warn('⚠️ Whisper cleanup on window close failed:', whisperError)
+        await Promise.all([
+          invoke('cancel_all_transcriptions').catch(console.warn),
+          invoke('emergency_shutdown_whisper').catch(console.warn)
+        ])
+        console.log('✅ Emergency shutdown signals sent')
+      } catch (signalError) {
+        console.warn('⚠️ Emergency signals failed:', signalError)
       }
+      
+      // Background cleanup with aggressive timeout
+      const backgroundCleanup = async () => {
+        const cleanupPromises = []
+        
+        if (isRecording.value) {
+          cleanupPromises.push(
+            stopRecording().catch(err => {
+              console.error('❌ Background microphone cleanup failed:', err)
+              // Force reset state
+              isRecording.value = false
+            })
+          )
+        }
+        
+        if (isAudioLoopbackActive.value) {
+          cleanupPromises.push(
+            stopAudioLoopbackCapture().catch(err => {
+              console.error('❌ Background loopback cleanup failed:', err)
+              // Force reset state
+              conversationStore.setAudioLoopbackState(false)
+            })
+          )
+        }
+        
+        // Aggressive cleanup with short timeout
+        try {
+          await Promise.race([
+            Promise.allSettled(cleanupPromises),
+            new Promise(resolve => setTimeout(resolve, 1000)) // 1 second max
+          ])
+          console.log('✅ Background audio cleanup completed')
+        } catch (error) {
+          console.warn('⚠️ Background audio cleanup timeout:', error)
+        }
+        
+        // Force cleanup all whisper contexts
+        try {
+          await Promise.race([
+            invoke('force_cleanup_whisper_contexts'),
+            new Promise(resolve => setTimeout(resolve, 500)) // 500ms max
+          ])
+          console.log('✅ Background whisper cleanup completed')
+        } catch (whisperError) {
+          console.warn('⚠️ Background whisper cleanup failed:', whisperError)
+        }
+        
+        // Final state reset
+        isRecording.value = false
+        conversationStore.setAudioLoopbackState(false)
+        console.log('✅ Background cleanup sequence completed')
+      }
+      
+      // Execute background cleanup without blocking
+      backgroundCleanup()
     }
     
   } catch (error) {
-    console.error('❌ Error during window close cleanup:', error)
-  } finally {
-    // Always emit close events regardless of cleanup success
+    console.error('❌ Error during instant window close:', error)
+    
+    // Ensure window still closes even if cleanup fails
     emit('close')
     emit('update:showConversationalWindow', false)
-    console.log('🚪 Conversational window closed')
+    
+    // Emergency state reset
+    isRecording.value = false
+    conversationStore.setAudioLoopbackState(false)
   }
 }
 
@@ -686,6 +837,12 @@ const formatSessionDuration = () => {
                 <MicrophoneIcon class="w-4 h-4" />
                 <span class="btn-label">{{ isRecording ? 'Stop' : 'Start' }}</span>
               </button>
+
+              <!-- Saving Indicator -->
+              <div v-if="isSaving" class="saving-indicator">
+                <div class="saving-spinner"></div>
+                <span class="saving-text">Saving...</span>
+              </div>
 
               <!-- Error Display -->
               <div v-if="speechError" class="compact-error">
@@ -991,6 +1148,26 @@ const formatSessionDuration = () => {
 
 .error-text {
   @apply text-xs text-red-300;
+}
+
+/* Saving Indicator */
+.saving-indicator {
+  @apply flex items-center gap-1.5 px-2 py-1.5 rounded-md;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.saving-spinner {
+  @apply w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full;
+  animation: spin 1s linear infinite;
+}
+
+.saving-text {
+  @apply text-xs text-blue-300 font-medium;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Transition styles */
