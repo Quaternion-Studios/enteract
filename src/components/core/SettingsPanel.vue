@@ -106,7 +106,7 @@ const generalSettings = ref({
   autoSaveInterval: 5,
   // Whisper model settings
   microphoneWhisperModel: 'tiny',
-  loopbackWhisperModel: 'small',
+  loopbackWhisperModel: 'tiny',
   // Transparency settings
   enableTransparency: false,
   defaultTransparencyLevel: 1.0,
@@ -248,6 +248,12 @@ const loadSettings = async () => {
     
     const storedGeneralSettings = await invoke<any>('load_general_settings')
     if (storedGeneralSettings) {
+      // Migration logic: convert existing 'small' loopback setting to 'tiny'
+      if (storedGeneralSettings.loopbackWhisperModel === 'small') {
+        storedGeneralSettings.loopbackWhisperModel = 'tiny'
+        console.log('🔄 Migrated loopback Whisper model from "small" to "tiny"')
+      }
+      
       generalSettings.value = { ...generalSettings.value, ...storedGeneralSettings }
       
       // Apply transparency settings from loaded settings
@@ -941,7 +947,7 @@ onMounted(() => {
                     <option value="small">Small (Best accuracy, Slower)</option>
                   </select>
                 </label>
-                <p class="text-white/60 text-xs mt-1">Model used for system audio loopback transcription. Base is recommended for better accuracy with recorded audio.</p>
+                <p class="text-white/60 text-xs mt-1">Model used for system audio loopback transcription. Tiny is recommended for real-time performance.</p>
               </div>
               
               <div class="setting-item">

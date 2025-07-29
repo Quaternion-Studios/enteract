@@ -67,14 +67,14 @@ pub async fn process_audio_for_transcription(
                 if let Some(model_str) = model.as_str() {
                     model_str.to_string()
                 } else {
-                    "small".to_string() // Default for loopback - same as microphone
+                    "tiny".to_string() // Default for loopback - same as microphone
                 }
             } else {
-                "small".to_string() // Default for loopback - same as microphone
+                "tiny".to_string() // Default for loopback - same as microphone
             }
         }
-        Ok(None) => "small".to_string(), // No settings found, use default
-        Err(_) => "small".to_string() // Error loading settings, use default
+        Ok(None) => "tiny".to_string(), // No settings found, use default
+        Err(_) => "tiny".to_string() // Error loading settings, use default
     };
     
     println!("[AUDIO_PROCESSOR] Using Whisper model: {}", model_size);

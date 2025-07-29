@@ -52,7 +52,7 @@ export function useSpeechTranscription() {
 
   // Configuration
   const defaultWhisperConfig: WhisperConfig = {
-    modelSize: 'small',
+    modelSize: 'tiny',
     language: 'en',
     enableVAD: true,
     silenceThreshold: 0.01,
