@@ -506,7 +506,7 @@ export function useSpeechTranscription() {
     }
   }
 
-  // Enhanced stop recording with cleanup and auto-send
+  // Enhanced stop recording with parallel cleanup and whisper thread termination
   const stopRecording = async () => {
     if (!isRecording.value) return
 
@@ -515,30 +515,74 @@ export function useSpeechTranscription() {
       isRecording.value = false
       isTranscribing.value = false
       
-      // Clean up silence detection
-      resetSilenceTimer()
-      if (audioContext && audioContext.state !== 'closed') {
-        await audioContext.close()
-        audioContext = null
-        analyser = null
-      }
+      console.log('🛑 Starting parallel audio system cleanup...')
+      
+      // Parallel cleanup sequence - all systems simultaneously
+      const cleanupPromises = [
+        // Audio context cleanup
+        (async () => {
+          resetSilenceTimer()
+          if (audioContext && audioContext.state !== 'closed') {
+            await audioContext.close()
+            audioContext = null
+            analyser = null
+          }
+          console.log('✅ Audio context cleaned up')
+        })(),
+        
+        // Web Speech API cleanup
+        (async () => {
+          if (recognition) {
+            recognition.stop()
+            isListening.value = false
+          }
+          console.log('✅ Web Speech API stopped')
+        })(),
+        
+        // MediaRecorder cleanup
+        (async () => {
+          if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop()
+          }
+          console.log('✅ MediaRecorder stopped')
+        })(),
+        
+        // Audio stream cleanup
+        (async () => {
+          if (audioStream) {
+            audioStream.getTracks().forEach(track => track.stop())
+            audioStream = null
+          }
+          console.log('✅ Audio stream tracks stopped')
+        })(),
+        
+        // Whisper context cleanup - microphone specific
+        (async () => {
+          try {
+            await invoke('cleanup_whisper_microphone_context')
+            console.log('✅ Whisper microphone context cleaned up')
+          } catch (whisperError) {
+            console.warn('⚠️ Whisper microphone cleanup failed:', whisperError)
+            // Try force cleanup if normal cleanup fails
+            try {
+              await invoke('force_cleanup_whisper_contexts')
+              console.log('✅ Force whisper cleanup successful')
+            } catch (forceError) {
+              console.error('❌ Force whisper cleanup also failed:', forceError)
+            }
+          }
+        })()
+      ]
 
-      // Stop Web Speech API
-      if (recognition) {
-        recognition.stop()
-        isListening.value = false
-      }
-
-      // Stop MediaRecorder
-      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop()
-      }
-
-      // Stop audio stream
-      if (audioStream) {
-        audioStream.getTracks().forEach(track => track.stop())
-        audioStream = null
-      }
+      // Execute all cleanup operations in parallel with timeout
+      await Promise.race([
+        Promise.allSettled(cleanupPromises),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Cleanup timeout')), 5000)
+        )
+      ])
+      
+      console.log('✅ Parallel audio system cleanup completed')
 
       // End session
       if (currentSession.value) {
@@ -571,6 +615,14 @@ export function useSpeechTranscription() {
     } catch (err) {
       console.error('Error stopping recording:', err)
       error.value = `Error stopping recording: ${err}`
+      
+      // Emergency cleanup on error
+      try {
+        await invoke('force_cleanup_whisper_contexts')
+        console.log('✅ Emergency whisper cleanup completed')
+      } catch (emergencyError) {
+        console.error('❌ Emergency cleanup failed:', emergencyError)
+      }
     } finally {
       // Ensure processing state is reset even if there are errors
       isProcessing.value = false

@@ -141,6 +141,7 @@ export const useConversationStore = defineStore('conversation', () => {
       : currentSession.value
 
     if (targetSession) {
+      // Immediate state updates
       targetSession.isActive = false
       targetSession.endTime = Date.now()
       console.log(`🏁 Store: Session ended with ${targetSession.messages.length} messages:`, targetSession.id)
@@ -150,9 +151,43 @@ export const useConversationStore = defineStore('conversation', () => {
         console.log('🏁 Store: Cleared current session reference')
       }
       
-      // Force immediate save when ending session to ensure persistence
-      console.log('💾 Store: Force saving session on end')
-      await saveSessions()
+      // Enhanced save with verification and retry logic
+      console.log('💾 Store: Force saving session on end (synchronous)')
+      
+      let saveAttempts = 0
+      const maxAttempts = 3
+      
+      while (saveAttempts < maxAttempts) {
+        try {
+          saveAttempts++
+          console.log(`💾 Store: Save attempt ${saveAttempts}/${maxAttempts}`)
+          
+          // Force immediate save - no delays
+          await saveSessions()
+          
+          // Verify save completed successfully
+          const verificationResponse = await invoke<{conversations: ConversationSession[]}>('load_conversations')
+          const savedSession = verificationResponse.conversations.find(s => s.id === targetSession.id)
+          
+          if (savedSession && savedSession.endTime === targetSession.endTime) {
+            console.log('✅ Store: Save verification successful for session:', targetSession.id)
+            break
+          } else {
+            throw new Error('Save verification failed - session not found or endTime mismatch')
+          }
+          
+        } catch (error) {
+          console.error(`❌ Store: Save attempt ${saveAttempts} failed:`, error)
+          
+          if (saveAttempts === maxAttempts) {
+            console.error('❌ Store: All save attempts failed - session may not be persisted')
+            throw new Error(`Failed to save session after ${maxAttempts} attempts: ${error}`)
+          }
+          
+          // Brief retry delay only on failure
+          await new Promise(resolve => setTimeout(resolve, 200))
+        }
+      }
     }
   }
 

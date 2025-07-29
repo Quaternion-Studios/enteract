@@ -73,8 +73,10 @@ pub struct TranscriptionResult {
     pub language: Option<String>,
 }
 
-// Global whisper context
+// Global whisper contexts for separate microphone and loopback systems
 lazy_static::lazy_static! {
+    pub static ref WHISPER_CONTEXT_MIC: Arc<Mutex<Option<WhisperContext>>> = Arc::new(Mutex::new(None));
+    pub static ref WHISPER_CONTEXT_LOOPBACK: Arc<Mutex<Option<WhisperContext>>> = Arc::new(Mutex::new(None));
     pub static ref WHISPER_CONTEXT: Arc<Mutex<Option<WhisperContext>>> = Arc::new(Mutex::new(None));
     static ref MODEL_CACHE_DIR: PathBuf = {
         let mut cache_dir = std::env::temp_dir();
@@ -314,5 +316,123 @@ fn load_audio_file(file_path: &str) -> Result<Vec<f32>, String> {
     println!("[WHISPER] Audio RMS: {:.6}", rms);
     
     Ok(audio_f32)
+}
+
+// Whisper cleanup functions for proper context termination
+#[tauri::command]
+pub async fn cleanup_whisper_context() -> Result<String, String> {
+    cleanup_whisper_context_internal(&WHISPER_CONTEXT)
+        .map(|_| "Main Whisper context cleaned up successfully".to_string())
+}
+
+#[tauri::command]
+pub async fn cleanup_whisper_microphone_context() -> Result<String, String> {
+    cleanup_whisper_context_internal(&WHISPER_CONTEXT_MIC)
+        .map(|_| "Microphone Whisper context cleaned up successfully".to_string())
+}
+
+#[tauri::command]
+pub async fn cleanup_whisper_loopback_context() -> Result<String, String> {
+    cleanup_whisper_context_internal(&WHISPER_CONTEXT_LOOPBACK)
+        .map(|_| "Loopback Whisper context cleaned up successfully".to_string())
+}
+
+#[tauri::command]
+pub async fn cleanup_all_whisper_contexts() -> Result<String, String> {
+    let mut results = Vec::new();
+    
+    // Cleanup all contexts in parallel with timeout handling
+    let cleanup_tasks = vec![
+        cleanup_whisper_context_internal(&WHISPER_CONTEXT),
+        cleanup_whisper_context_internal(&WHISPER_CONTEXT_MIC),
+        cleanup_whisper_context_internal(&WHISPER_CONTEXT_LOOPBACK),
+    ];
+    
+    let mut success_count = 0;
+    let mut error_count = 0;
+    
+    for result in cleanup_tasks {
+        match result {
+            Ok(_) => success_count += 1,
+            Err(e) => {
+                error_count += 1;
+                results.push(format!("Error: {}", e));
+            }
+        }
+    }
+    
+    if error_count == 0 {
+        Ok(format!("All {} Whisper contexts cleaned up successfully", success_count))
+    } else {
+        Ok(format!("Cleanup completed with {} successes and {} errors: {}", 
+               success_count, error_count, results.join("; ")))
+    }
+}
+
+// Internal cleanup function with timeout handling
+fn cleanup_whisper_context_internal(context: &Arc<Mutex<Option<WhisperContext>>>) -> Result<(), String> {
+    use std::time::{Duration, Instant};
+    
+    let start_time = Instant::now();
+    let timeout = Duration::from_secs(5); // 5 second timeout for cleanup
+    
+    // Try to acquire the mutex with timeout
+    loop {
+        if start_time.elapsed() > timeout {
+            return Err("Timeout while trying to acquire Whisper context lock".to_string());
+        }
+        
+        match context.try_lock() {
+            Ok(mut whisper_ctx) => {
+                if whisper_ctx.is_some() {
+                    println!("🧹 Cleaning up Whisper context...");
+                    
+                    // Drop the context to free memory and resources
+                    *whisper_ctx = None;
+                    
+                    println!("✅ Whisper context cleaned up successfully");
+                    return Ok(());
+                } else {
+                    println!("ℹ️ Whisper context already cleaned up");
+                    return Ok(());
+                }
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                // Context is locked, wait a bit and try again
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            Err(e) => {
+                return Err(format!("Failed to acquire Whisper context lock: {}", e));
+            }
+        }
+    }
+}
+
+// Force cleanup with emergency termination
+#[tauri::command]
+pub async fn force_cleanup_whisper_contexts() -> Result<String, String> {
+    println!("🚨 Force cleanup of all Whisper contexts initiated");
+    
+    let mut cleanup_results = Vec::new();
+    
+    // Force cleanup each context individually
+    if let Ok(mut ctx) = WHISPER_CONTEXT.try_lock() {
+        *ctx = None;
+        cleanup_results.push("Main context");
+    }
+    
+    if let Ok(mut ctx) = WHISPER_CONTEXT_MIC.try_lock() {
+        *ctx = None;
+        cleanup_results.push("Microphone context");
+    }
+    
+    if let Ok(mut ctx) = WHISPER_CONTEXT_LOOPBACK.try_lock() {
+        *ctx = None;
+        cleanup_results.push("Loopback context");
+    }
+    
+    println!("✅ Force cleanup completed for: {:?}", cleanup_results);
+    Ok(format!("Force cleaned up {} Whisper contexts: {:?}", cleanup_results.len(), cleanup_results))
 }
 

@@ -261,47 +261,131 @@ const startAudioLoopbackCapture = async () => {
 
 const stopAudioLoopbackCapture = async () => {
   try {
-    await invoke('stop_audio_loopback_capture')
+    console.log('🛑 Starting loopback audio cleanup...')
+    
+    // Parallel cleanup of loopback system
+    const cleanupPromises = [
+      // Stop loopback capture
+      (async () => {
+        await invoke('stop_audio_loopback_capture')
+        console.log('✅ Loopback capture stopped')
+      })(),
+      
+      // Cleanup loopback whisper context
+      (async () => {
+        try {
+          await invoke('cleanup_whisper_loopback_context')
+          console.log('✅ Loopback whisper context cleaned up')
+        } catch (whisperError) {
+          console.warn('⚠️ Loopback whisper cleanup failed:', whisperError)
+          // Continue anyway as this is not critical
+        }
+      })(),
+      
+      // Clear audio buffer and release device handles
+      (async () => {
+        try {
+          await invoke('clear_loopback_audio_buffers')
+          console.log('✅ Loopback audio buffers cleared')
+        } catch (bufferError) {
+          console.warn('⚠️ Buffer cleanup failed:', bufferError)
+          // Continue anyway
+        }
+      })()
+    ]
+    
+    // Execute cleanup with timeout
+    await Promise.race([
+      Promise.allSettled(cleanupPromises),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Loopback cleanup timeout')), 3000)
+      )
+    ])
+    
+    // Update state after successful cleanup
     conversationStore.setAudioLoopbackState(false)
+    console.log('✅ Loopback audio system cleanup completed')
+    
   } catch (error) {
-    console.error('Failed to stop audio loopback capture:', error)
+    console.error('❌ Failed to stop audio loopback capture:', error)
+    
+    // Emergency cleanup - force state reset even if cleanup fails
+    conversationStore.setAudioLoopbackState(false)
+    
+    try {
+      await invoke('force_cleanup_whisper_contexts')
+      console.log('✅ Emergency loopback cleanup completed')
+    } catch (emergencyError) {
+      console.error('❌ Emergency loopback cleanup failed:', emergencyError)
+    }
   }
 }
 
-// Microphone toggle
+// Enhanced microphone toggle with improved stop behavior
 const toggleMicrophone = async () => {
   if (isRecording.value) {
-    await stopRecording()
-    await stopAudioLoopbackCapture()
+    // A. Immediate state reset for responsive UI
+    console.log('🛑 Stopping conversation - immediate UI reset')
     
-    if (conversationStore.currentSession) {
-      // Get session ID before ending it
-      const sessionId = conversationStore.currentSession.id
+    // Show "Saving..." visual feedback
+    const savingIndicator = ref(true)
+    
+    try {
+      // B. Parallel cleanup sequence - stop both systems simultaneously
+      const cleanupPromises = [
+        stopRecording().catch(err => console.error('❌ Microphone cleanup failed:', err)),
+        stopAudioLoopbackCapture().catch(err => console.error('❌ Loopback cleanup failed:', err))
+      ]
       
-      // End the current session (now async with immediate save)
-      await conversationStore.endSession()
-      console.log('🏁 ConversationalWindow: Session ended:', sessionId)
+      await Promise.allSettled(cleanupPromises)
+      console.log('✅ Audio systems stopped in parallel')
       
-      // Small delay to ensure backend persistence completes
-      await new Promise(resolve => setTimeout(resolve, 500))
+      if (conversationStore.currentSession) {
+        const sessionId = conversationStore.currentSession.id
+        console.log('💾 Force saving session immediately:', sessionId)
+        
+        // C. Force immediate save with no delay
+        await conversationStore.endSession()
+        console.log('🏁 ConversationalWindow: Session ended and saved:', sessionId)
+        
+        // D. Refresh conversation list to show the newly ended session
+        await loadConversations()
+        console.log('📁 ConversationalWindow: Conversations refreshed, count:', allConversations.value.length)
+      }
       
-      // Refresh conversation list to show the newly ended session
-      await loadConversations()
-      console.log('📁 ConversationalWindow: After ending session and loading, allConversations:', allConversations.value.length)
+    } catch (error) {
+      console.error('❌ Error during stop sequence:', error)
+      // Ensure cleanup happens even if save fails
+      if (isRecording.value) {
+        await stopRecording().catch(console.error)
+      }
+      if (isAudioLoopbackActive.value) {
+        await stopAudioLoopbackCapture().catch(console.error)
+      }
+    } finally {
+      savingIndicator.value = false
     }
+    
   } else {
+    // Starting recording
     if (!conversationStore.currentSession) {
-      // Create a new session if none exists
       const session = conversationStore.createSession()
       console.log('🆕 ConversationalWindow: Created new session:', session.id)
     } else {
       console.log('🔄 ConversationalWindow: Using existing session:', conversationStore.currentSession.id)
     }
     
-    await startRecording()
+    // Start both systems in parallel
+    const startPromises = [
+      startRecording()
+    ]
+    
     if (audioLoopbackDeviceId.value) {
-      await startAudioLoopbackCapture()
+      startPromises.push(startAudioLoopbackCapture())
     }
+    
+    await Promise.allSettled(startPromises)
+    console.log('✅ Audio systems started')
   }
 }
 
@@ -412,14 +496,50 @@ const toggleLiveAIActive = async () => {
   }
 }
 
-// Close window
-const closeWindow = () => {
-  if (isRecording.value) {
-    stopRecording()
-    stopAudioLoopbackCapture()
+// Enhanced close window with complete cleanup
+const closeWindow = async () => {
+  try {
+    console.log('🚪 Closing conversational window with full cleanup...')
+    
+    if (isRecording.value || isAudioLoopbackActive.value) {
+      // Parallel cleanup of all systems
+      const cleanupPromises = []
+      
+      if (isRecording.value) {
+        cleanupPromises.push(stopRecording().catch(err => 
+          console.error('❌ Microphone cleanup during window close failed:', err)
+        ))
+      }
+      
+      if (isAudioLoopbackActive.value) {
+        cleanupPromises.push(stopAudioLoopbackCapture().catch(err => 
+          console.error('❌ Loopback cleanup during window close failed:', err)
+        ))
+      }
+      
+      // Wait for cleanup with timeout
+      await Promise.race([
+        Promise.allSettled(cleanupPromises),
+        new Promise(resolve => setTimeout(resolve, 2000)) // 2 second timeout
+      ])
+      
+      // Force cleanup all whisper contexts on window close
+      try {
+        await invoke('cleanup_all_whisper_contexts')
+        console.log('✅ All whisper contexts cleaned up on window close')
+      } catch (whisperError) {
+        console.warn('⚠️ Whisper cleanup on window close failed:', whisperError)
+      }
+    }
+    
+  } catch (error) {
+    console.error('❌ Error during window close cleanup:', error)
+  } finally {
+    // Always emit close events regardless of cleanup success
+    emit('close')
+    emit('update:showConversationalWindow', false)
+    console.log('🚪 Conversational window closed')
   }
-  emit('close')
-  emit('update:showConversationalWindow', false)
 }
 
 // UI helper functions
