@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, nextTick } from 'vue'
+import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import {
   Cog6ToothIcon,
   XMarkIcon,
@@ -14,6 +14,7 @@ import {
 import { useAIModels } from '../../composables/useAIModels'
 import { useTransparency } from '../../composables/useTransparency'
 import { useWindowRegistration } from '../../composables/useWindowRegistry'
+import { useGpuInfo } from '../../composables/useGpuInfo'
 import { invoke } from '@tauri-apps/api/core'
 
 interface Props {
@@ -115,6 +116,56 @@ const generalSettings = ref({
 // Transparency composable
 const transparency = useTransparency()
 
+// GPU Information composable
+const {
+  gpus,
+  isLoading: isLoadingGpuInfo,
+  error: gpuError,
+  gpuStats: gpuInfo,
+  fetchGpuInfo: loadGpuInfo,
+  fetchGpuUtilization,
+  clearError: clearGpuError,
+  refresh: refreshGpuInfo,
+  formatMemorySize,
+  getVendorColorClass,
+  supportsRealTimeMonitoring,
+  getTemperatureStatus,
+  getMemoryUsagePercentage,
+  formatPciId
+} = useGpuInfo()
+
+// Real-time GPU monitoring
+const gpuMonitoringInterval = ref<number | null>(null)
+const isMonitoringEnabled = ref(false)
+
+const startGpuMonitoring = () => {
+  if (gpuMonitoringInterval.value) return // Already monitoring
+  
+  isMonitoringEnabled.value = true
+  
+  // Update GPU utilization every 3 seconds
+  gpuMonitoringInterval.value = window.setInterval(async () => {
+    if (isMonitoringEnabled.value && gpus.value.length > 0) {
+      try {
+        await fetchGpuUtilization()
+      } catch (error) {
+        console.warn('Failed to update GPU utilization:', error)
+      }
+    }
+  }, 3000)
+  
+  console.log('🔄 Started GPU monitoring')
+}
+
+const stopGpuMonitoring = () => {
+  if (gpuMonitoringInterval.value) {
+    clearInterval(gpuMonitoringInterval.value)
+    gpuMonitoringInterval.value = null
+  }
+  isMonitoringEnabled.value = false
+  console.log('⏹️ Stopped GPU monitoring')
+}
+
 // Audio device enumeration functions
 const enumerateAudioDevices = async () => {
   isLoadingAudioDevices.value = true
@@ -180,6 +231,7 @@ const getDeviceMethodBadge = (method: string) => {
       return { text: method, class: 'bg-gray-500/20 text-gray-300 border-gray-400/30' }
   }
 }
+
 
 // Load settings from storage
 const loadSettings = async () => {
@@ -252,12 +304,19 @@ watch(() => props.showSettingsPanel, async (newValue) => {
   } else {
     // Unregister when settings panel closes
     windowRegistry.unregisterSelf()
+    // Stop GPU monitoring when closing
+    stopGpuMonitoring()
   }
 })
 
 // Watch for tab changes
-watch(activeTab, async (newTab) => {
+watch(activeTab, async (newTab, oldTab) => {
   if (!props.showSettingsPanel) return
+  
+  // Stop GPU monitoring when leaving general tab
+  if (oldTab === 'general') {
+    stopGpuMonitoring()
+  }
   
   if (newTab === 'models') {
     await fetchOllamaStatus()
@@ -266,6 +325,12 @@ watch(activeTab, async (newTab) => {
     }
   } else if (newTab === 'audio') {
     await enumerateAudioDevices()
+  } else if (newTab === 'general') {
+    await loadGpuInfo()
+    // Start monitoring if GPUs support it
+    if (gpus.value.some(gpu => supportsRealTimeMonitoring(gpu))) {
+      startGpuMonitoring()
+    }
   }
 })
 
@@ -343,6 +408,12 @@ const closePanel = () => {
   emit('close')
   emit('update:showSettingsPanel', false)
 }
+
+// Lifecycle hooks
+onUnmounted(() => {
+  // Clean up GPU monitoring on unmount
+  stopGpuMonitoring()
+})
 
 const clearModelsError = () => {
   modelsError.value = null
@@ -913,6 +984,109 @@ onMounted(() => {
                     class="setting-range"
                   >
                 </label>
+              </div>
+              
+              <div class="setting-separator"></div>
+              
+              <h4 class="text-white/80 text-sm font-medium mb-3">System Information</h4>
+              
+              <!-- GPU Information Section -->
+              <div class="setting-item">
+                <div class="gpu-info-section">
+                  <div class="flex items-center justify-between mb-3">
+                    <span class="text-white/90 font-medium">Graphics Cards</span>
+                    <button 
+                      @click="refreshGpuInfo" 
+                      :disabled="isLoadingGpuInfo"
+                      class="gpu-refresh-btn"
+                      title="Refresh GPU Information"
+                    >
+                      <ComputerDesktopIcon class="w-4 h-4" :class="{ 'animate-spin': isLoadingGpuInfo }" />
+                    </button>
+                  </div>
+                  
+                  <!-- Loading State -->
+                  <div v-if="isLoadingGpuInfo" class="gpu-loading">
+                    <div class="animate-pulse text-white/60 text-sm">Detecting graphics cards...</div>
+                  </div>
+                  
+                  <!-- Error State -->
+                  <div v-else-if="gpuError" class="gpu-error">
+                    <span class="text-red-400 text-sm">{{ gpuError }}</span>
+                    <button @click="clearGpuError" class="ml-2 text-white/60 hover:text-white">×</button>
+                  </div>
+                  
+                  <!-- GPU List -->
+                  <div v-else-if="gpus.length > 0" class="gpu-list space-y-3">
+                    <div v-for="gpu in gpus" :key="gpu.name" class="gpu-card">
+                      <div class="gpu-card-header">
+                        <div class="gpu-name" :title="gpu.name">{{ gpu.name }}</div>
+                        <div class="gpu-vendor-badge" :class="getVendorColorClass(gpu.vendor)">
+                          {{ gpu.vendor }}
+                        </div>
+                        <div v-if="supportsRealTimeMonitoring(gpu) && isMonitoringEnabled" class="monitoring-indicator">
+                          <div class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                          <span class="text-xs text-green-400 ml-1">Live</span>
+                        </div>
+                      </div>
+                      
+                      <div class="gpu-details">
+                        <div v-if="gpu.driver_version" class="gpu-detail">
+                          <span class="detail-label">Driver:</span>
+                          <span class="detail-value gpu-driver-version" :title="gpu.driver_version">{{ gpu.driver_version }}</span>
+                        </div>
+                        
+                        <div v-if="gpu.memory_total" class="gpu-detail">
+                          <span class="detail-label">Memory:</span>
+                          <span class="detail-value">
+                            <span v-if="gpu.memory_used">{{ formatMemorySize(gpu.memory_used) }} / </span>{{ formatMemorySize(gpu.memory_total) }}
+                            <span v-if="gpu.memory_used && gpu.memory_total" class="memory-usage">
+                              ({{ getMemoryUsagePercentage(gpu) }}%)
+                            </span>
+                          </span>
+                        </div>
+                        
+                        <div v-if="gpu.temperature" class="gpu-detail">
+                          <span class="detail-label">Temperature:</span>
+                          <span class="detail-value" :class="getTemperatureStatus(gpu.temperature).color">
+                            {{ gpu.temperature }}°C
+                          </span>
+                        </div>
+                        
+                        <div v-if="gpu.utilization !== null && gpu.utilization !== undefined" class="gpu-detail">
+                          <span class="detail-label">Utilization:</span>
+                          <span class="detail-value">
+                            {{ gpu.utilization }}%
+                            <div class="w-16 h-2 bg-white/10 rounded-full ml-2 inline-block flex-shrink-0">
+                              <div 
+                                class="h-full bg-blue-400 rounded-full transition-all duration-300"
+                                :style="{ width: `${gpu.utilization}%` }"
+                              ></div>
+                            </div>
+                          </span>
+                        </div>
+                        
+                        <div v-if="gpu.pci_id" class="gpu-detail">
+                          <span class="detail-label">PCI ID:</span>
+                          <span class="detail-value gpu-pci-id" :title="gpu.pci_id">{{ formatPciId(gpu.pci_id) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <!-- No GPUs Found -->
+                  <div v-else class="no-gpu">
+                    <p class="text-white/60 text-sm">No graphics cards detected</p>
+                    <p class="text-white/40 text-xs mt-1">This may indicate a driver or detection issue</p>
+                  </div>
+                  
+                  <!-- Last Updated -->
+                  <div v-if="gpuInfo.last_updated" class="gpu-last-updated">
+                    <span class="text-white/40 text-xs">
+                      Last updated: {{ new Date(gpuInfo.last_updated * 1000).toLocaleTimeString() }}
+                    </span>
+                  </div>
+                </div>
               </div>
               
               <div class="setting-separator"></div>
@@ -1721,5 +1895,98 @@ onMounted(() => {
 .tab-content {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+/* GPU Information Styles */
+.gpu-info-section {
+  @apply w-full;
+}
+
+.gpu-refresh-btn {
+  @apply rounded-lg p-2 hover:bg-white/10 transition-colors text-white/70 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+.gpu-loading {
+  @apply p-4 text-center;
+}
+
+.gpu-error {
+  @apply p-3 rounded-lg bg-red-500/10 border border-red-400/30 flex items-center justify-between;
+}
+
+.gpu-list {
+  @apply space-y-3;
+}
+
+.gpu-card {
+  @apply p-4 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-colors;
+}
+
+.gpu-card-header {
+  @apply flex items-center justify-between gap-2 mb-3 min-w-0;
+}
+
+.monitoring-indicator {
+  @apply flex items-center;
+}
+
+.gpu-name {
+  @apply text-white/90 font-medium text-sm truncate max-w-xs;
+}
+
+.gpu-vendor-badge {
+  @apply px-2 py-1 rounded-full text-xs font-medium border flex-shrink-0;
+}
+
+.vendor-nvidia {
+  @apply bg-green-500/20 text-green-300 border-green-400/30;
+}
+
+.vendor-amd {
+  @apply bg-red-500/20 text-red-300 border-red-400/30;
+}
+
+.vendor-intel {
+  @apply bg-blue-500/20 text-blue-300 border-blue-400/30;
+}
+
+.vendor-unknown {
+  @apply bg-gray-500/20 text-gray-300 border-gray-400/30;
+}
+
+.gpu-details {
+  @apply space-y-2;
+}
+
+.gpu-detail {
+  @apply flex items-start justify-between text-sm gap-2 min-w-0;
+}
+
+.detail-label {
+  @apply text-white/60 flex-shrink-0;
+}
+
+.detail-value {
+  @apply text-white/90 font-mono text-right min-w-0;
+}
+
+.gpu-pci-id {
+  @apply truncate max-w-32 inline-block;
+}
+
+.gpu-driver-version {
+  @apply truncate max-w-24 inline-block;
+}
+
+.memory-usage {
+  @apply text-white/60 ml-1;
+}
+
+.no-gpu {
+  @apply p-4 text-center rounded-lg bg-white/5 border border-white/10;
+}
+
+.gpu-last-updated {
+  @apply mt-3 pt-3 border-t border-white/10 text-center;
 }
 </style>
