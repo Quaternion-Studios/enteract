@@ -12,6 +12,7 @@ mod file_handler;
 mod data_store;
 mod audio_loopback; // New audio loopback module
 mod system_prompts; // System prompts module
+pub mod gpu_detection; // GPU detection module
 
 // Re-export the commands from modules
 use transparency::{set_window_transparency, emergency_restore_window, toggle_transparency};
@@ -46,6 +47,9 @@ use audio_loopback::{
     save_audio_settings, load_audio_settings, save_general_settings, load_general_settings,
     start_audio_loopback_capture, stop_audio_loopback_capture, process_audio_for_transcription
 };
+
+// Import GPU detection commands
+use gpu_detection::{get_gpu_info, get_gpu_utilization};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -149,7 +153,11 @@ pub fn run() {
             load_general_settings,
             start_audio_loopback_capture,
             stop_audio_loopback_capture,
-            process_audio_for_transcription
+            process_audio_for_transcription,
+            
+            // GPU detection commands
+            get_gpu_info,
+            get_gpu_utilization
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
