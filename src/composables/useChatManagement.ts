@@ -41,6 +41,11 @@ export const useChatManagement = (selectedModel: string | null, scrollChatToBott
     
     await AgentService.sendMessage(messageToSend, selectedModel, agentType)
   }
+  
+  // Cancel an active AI response
+  const cancelResponse = async (messageId: number) => {
+    await AgentService.cancelResponse(messageId)
+  }
 
   // Keyboard handler
   const handleChatKeydown = (event: KeyboardEvent) => {
@@ -176,6 +181,9 @@ export const useChatManagement = (selectedModel: string | null, scrollChatToBott
     
     // File upload functions
     triggerFileUpload,
-    handleFileUpload
+    handleFileUpload,
+    
+    // Cancel function
+    cancelResponse
   }
 }

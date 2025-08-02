@@ -12,6 +12,7 @@ mod file_handler;
 mod data_store;
 mod audio_loopback; // New audio loopback module
 mod system_prompts; // System prompts module
+mod system_info; // System information module
 
 // Re-export the commands from modules
 use transparency::{set_window_transparency, emergency_restore_window, toggle_transparency};
@@ -31,14 +32,14 @@ use ollama::{
     get_ollama_models, get_ollama_status, pull_ollama_model, delete_ollama_model,
     generate_ollama_response, generate_ollama_response_stream, get_ollama_model_info,
     generate_enteract_agent_response, generate_vision_analysis, generate_deep_research,
-    generate_conversational_ai, generate_coding_agent_response
+    generate_conversational_ai, generate_coding_agent_response, cancel_ai_response
 };
 use screenshot::{capture_screenshot, capture_screenshot_area};
 use file_handler::{
     upload_file_base64, validate_file_upload, get_file_upload_config,
     process_clipboard_image, cleanup_temp_files
 };
-use data_store::{save_chat_sessions, load_chat_sessions, save_conversations, load_conversations, delete_conversation, clear_all_conversations};
+use data_store::{save_chat_sessions, load_chat_sessions, save_conversations, load_conversations, delete_conversation, clear_all_conversations, restore_from_backup, list_backups};
 
 // Import new audio loopback commands
 use audio_loopback::{
@@ -46,6 +47,7 @@ use audio_loopback::{
     save_audio_settings, load_audio_settings, save_general_settings, load_general_settings,
     start_audio_loopback_capture, stop_audio_loopback_capture, process_audio_for_transcription
 };
+use system_info::get_system_info;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -119,6 +121,7 @@ pub fn run() {
             generate_deep_research,
             generate_conversational_ai,
             generate_coding_agent_response,
+            cancel_ai_response,
             
             // Screenshot
             capture_screenshot,
@@ -138,6 +141,8 @@ pub fn run() {
             load_conversations,
             delete_conversation,
             clear_all_conversations,
+            restore_from_backup,
+            list_backups,
             
             // NEW: Audio loopback commands
             enumerate_loopback_devices,
@@ -149,7 +154,10 @@ pub fn run() {
             load_general_settings,
             start_audio_loopback_capture,
             stop_audio_loopback_capture,
-            process_audio_for_transcription
+            process_audio_for_transcription,
+            
+            // System info
+            get_system_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

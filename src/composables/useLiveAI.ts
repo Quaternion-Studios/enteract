@@ -196,7 +196,7 @@ export function useLiveAI() {
     }
     
     // Set a debounced timeout to analyze after conversation pause
-    analysisTimeout = setTimeout(async () => {
+    analysisTimeout = window.setTimeout(async () => {
       if (!isActive.value || isProcessing.value) return
       
       console.log('💭 Conversation paused, analyzing for response suggestions...')

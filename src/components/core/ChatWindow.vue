@@ -190,7 +190,8 @@ const {
   sendMessage,
   triggerFileUpload,
   handleFileUpload,
-  estimateTokens
+  estimateTokens,
+  cancelResponse
 } = useChatManagement(props.selectedModel, scrollChatToBottom, currentAgent)
 
 // Context truncation detection
@@ -506,6 +507,13 @@ onUnmounted(() => {
                   <div v-if="message.confidence && message.sender !== 'transcription'" class="message-confidence">
                     Confidence: {{ Math.round(message.confidence * 100) }}%
                   </div>
+                  <!-- Cancel button for streaming messages -->
+                  <div v-if="message.isStreaming && message.sender === 'assistant'" class="message-actions">
+                    <button @click="cancelResponse(message.id)" class="cancel-button" title="Cancel response">
+                      <StopIcon class="w-4 h-4" />
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -738,6 +746,15 @@ onUnmounted(() => {
 
 .message-confidence {
   @apply text-xs opacity-60 mt-1;
+}
+
+.message-actions {
+  @apply mt-2 flex items-center gap-2;
+}
+
+.cancel-button {
+  @apply flex items-center gap-1 px-3 py-1 text-xs bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg transition-colors;
+  @apply border border-red-500/30 hover:border-red-500/50;
 }
 
 /* Transcription specific styles */

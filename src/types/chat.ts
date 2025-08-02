@@ -7,6 +7,8 @@ export interface ChatMessage {
     messageType: 'text'
     isInterim?: boolean
     confidence?: number
+    isStreaming?: boolean
+    sessionId?: string
   }
   
   export interface ChatSession {

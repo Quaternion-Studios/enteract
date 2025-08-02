@@ -9,6 +9,7 @@ use futures_util::StreamExt;
 use lazy_static::lazy_static;
 use tokio::sync::Semaphore;
 use tokio::time::timeout; 
+use std::sync::Mutex;
 use crate::system_prompts::{
     ENTERACT_AGENT_PROMPT, 
     VISION_ANALYSIS_PROMPT, 
@@ -29,6 +30,9 @@ lazy_static! {
     
     // Semaphore to limit concurrent AI model requests (memory safety)
     static ref REQUEST_SEMAPHORE: Arc<Semaphore> = Arc::new(Semaphore::new(3)); // Max 3 concurrent requests
+    
+    // Track active streaming sessions for cancellation
+    static ref ACTIVE_SESSIONS: Mutex<HashMap<String, bool>> = Mutex::new(HashMap::new());
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -132,65 +136,95 @@ fn build_prompt_with_context(current_prompt: String, context: Option<Vec<ChatCon
     }
 }
 
-// Enhanced fast repetition detection
+// Cancel a streaming session
+#[tauri::command]
+pub fn cancel_ai_response(session_id: String) -> Result<(), String> {
+    let mut sessions = ACTIVE_SESSIONS.lock().unwrap();
+    sessions.insert(session_id.clone(), true);
+    println!("🛑 Cancellation requested for session: {}", session_id);
+    Ok(())
+}
+
+// Check if a session is cancelled
+fn is_session_cancelled(session_id: &str) -> bool {
+    let sessions = ACTIVE_SESSIONS.lock().unwrap();
+    sessions.get(session_id).copied().unwrap_or(false)
+}
+
+// Clean up cancelled session
+fn cleanup_session(session_id: &str) {
+    let mut sessions = ACTIVE_SESSIONS.lock().unwrap();
+    sessions.remove(session_id);
+}
+
+// Shared streaming logic
 async fn stream_ollama_response(
     app_handle: AppHandle,
     url: String,
     request: GenerateRequest,
     session_id: String,
 ) -> Result<(), String> {
+    // Register the session as active
+    {
+        let mut sessions = ACTIVE_SESSIONS.lock().unwrap();
+        sessions.insert(session_id.clone(), false);
+    }
+    
     let client = Arc::clone(&HTTP_CLIENT);
-    let is_vision = request.images.is_some();
-    
-    let stream_timeout = if is_vision { Duration::from_secs(45) } else { Duration::from_secs(30) };
-    let chunk_timeout = Duration::from_secs(8);
-    
-    let emit_error_and_cleanup = |app_handle: &AppHandle, session_id: &str, error_msg: &str| {
-        let _ = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
-            "type": "error",
-            "error": error_msg
-        }));
-        let _ = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
-            "type": "complete"
-        }));
-    };
-    
-    let stream_result = timeout(stream_timeout, async {
-        match client.post(&url).json(&request).send().await {
-            Ok(response) => {
-                if response.status().is_success() {
-                    let mut stream = response.bytes_stream();
-                    let mut buffer = Vec::new();
-                    let mut total_chunks = 0;
-                    let mut last_activity = Instant::now();
-                    let mut accumulated_text = String::new();
-                    
-                    // FAST DETECTION: Track recent chunks for immediate patterns
-                    let mut recent_chunks = std::collections::VecDeque::with_capacity(10);
-                    let mut section_markers = std::collections::HashMap::new();
-                    
-                    while let Some(chunk_result) = stream.next().await {
-                        if last_activity.elapsed() > chunk_timeout {
-                            return Err("Stream timed out - model appears stuck".to_string());
-                        }
-                        
-                        match chunk_result {
-                            Ok(chunk) => {
-                                last_activity = Instant::now();
-                                total_chunks += 1;
+    match client.post(&url).json(&request).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                let mut stream = response.bytes_stream();
+                let mut buffer = Vec::new();
+                
+                while let Some(chunk_result) = stream.next().await {
+                    match chunk_result {
+                        Ok(chunk) => {
+                            buffer.extend_from_slice(&chunk);
+                            
+                            // Process complete lines from buffer
+                            while let Some(newline_pos) = buffer.iter().position(|&b| b == b'\n') {
+                                // Check for cancellation
+                                if is_session_cancelled(&session_id) {
+                                    println!("🛑 Session cancelled: {}", session_id);
+                                    
+                                    if let Err(e) = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
+                                        "type": "cancelled",
+                                        "message": "Response cancelled by user"
+                                    })) {
+                                        eprintln!("Failed to emit cancellation event: {}", e);
+                                    }
+                                    
+                                    cleanup_session(&session_id);
+                                    return Ok(());
+                                }
+                                
+                                let line = buffer.drain(..=newline_pos).collect::<Vec<u8>>();
+                                let line_str = String::from_utf8_lossy(&line[..line.len()-1]);
                                 
                                 // Much lower limit for faster detection
                                 if total_chunks > 800 {
                                     return Err("Stream exceeded chunk limit - preventing runaway generation".to_string());
                                 }
                                 
-                                buffer.extend_from_slice(&chunk);
-                                
-                                while let Some(newline_pos) = buffer.iter().position(|&b| b == b'\n') {
-                                    let line = buffer.drain(..=newline_pos).collect::<Vec<u8>>();
-                                    let line_str = String::from_utf8_lossy(&line[..line.len()-1]);
-                                    
-                                    if line_str.trim().is_empty() {
+                                match serde_json::from_str::<GenerateResponse>(&line_str) {
+                                    Ok(response_chunk) => {
+                                        if let Err(e) = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
+                                            "type": "chunk",
+                                            "text": response_chunk.response,
+                                            "done": response_chunk.done
+                                        })) {
+                                            eprintln!("Failed to emit chunk event: {}", e);
+                                        }
+                                        
+                                        if response_chunk.done {
+                                            println!("✅ Agent streaming completed for session: {}", session_id);
+                                            cleanup_session(&session_id);
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to parse streaming response: {} - Line: {}", e, line_str);
                                         continue;
                                     }
                                     

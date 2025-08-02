@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
+use chrono::{DateTime, Utc};
+use std::io::Write;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -155,6 +157,23 @@ fn get_chats_file_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir.join("user_chat_sessions.json"))
 }
 
+fn get_backup_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app_handle   
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+    
+    let backup_dir = app_data_dir.join("backups");
+    
+    // Ensure the backup directory exists
+    if !backup_dir.exists() {
+        fs::create_dir_all(&backup_dir)
+            .map_err(|e| format!("Failed to create backup directory: {}", e))?;
+    }
+    
+    Ok(backup_dir)
+}
+
 fn get_conversations_file_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     let app_data_dir = app_handle   
         .path()
@@ -177,13 +196,75 @@ pub fn save_chat_sessions(
 ) -> Result<(), String> {
     let file_path = get_chats_file_path(&app_handle)?;
     
+    // Create backup before saving
+    if file_path.exists() {
+        create_backup(&app_handle, &file_path, "chat")?;
+    }
+    
     let json_content = serde_json::to_string_pretty(&payload.chats)
         .map_err(|e| format!("Failed to serialize chat sessions: {}", e))?;
 
-    fs::write(&file_path, json_content)
-        .map_err(|e| format!("Failed to write chat sessions file: {}", e))?;
+    // Write to temporary file first
+    let temp_path = file_path.with_extension("tmp");
+    let mut temp_file = fs::File::create(&temp_path)
+        .map_err(|e| format!("Failed to create temporary file: {}", e))?;
+    
+    temp_file.write_all(json_content.as_bytes())
+        .map_err(|e| format!("Failed to write to temporary file: {}", e))?;
+    
+    temp_file.sync_all()
+        .map_err(|e| format!("Failed to sync temporary file: {}", e))?;
+    
+    // Atomically rename temp file to actual file
+    fs::rename(&temp_path, &file_path)
+        .map_err(|e| format!("Failed to rename temporary file: {}", e))?;
 
-    println!("Chat sessions saved to: {:?}", file_path);
+    println!("Chat sessions saved safely to: {:?}", file_path);
+    Ok(())
+}
+
+fn create_backup(app_handle: &AppHandle, source_path: &PathBuf, prefix: &str) -> Result<(), String> {
+    let backup_dir = get_backup_dir(app_handle)?;
+    let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
+    let backup_filename = format!("{}_{}.json", prefix, timestamp);
+    let backup_path = backup_dir.join(backup_filename);
+    
+    fs::copy(source_path, &backup_path)
+        .map_err(|e| format!("Failed to create backup: {}", e))?;
+    
+    // Clean up old backups (keep only last 10)
+    cleanup_old_backups(&backup_dir, prefix, 10)?;
+    
+    println!("Backup created: {:?}", backup_path);
+    Ok(())
+}
+
+fn cleanup_old_backups(backup_dir: &PathBuf, prefix: &str, keep_count: usize) -> Result<(), String> {
+    let mut backups: Vec<_> = fs::read_dir(backup_dir)
+        .map_err(|e| format!("Failed to read backup directory: {}", e))?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry.file_name().to_string_lossy().starts_with(prefix)
+        })
+        .collect();
+    
+    // Sort by modification time (newest first)
+    backups.sort_by_key(|entry| {
+        entry.metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+    });
+    backups.reverse();
+    
+    // Remove old backups
+    if backups.len() > keep_count {
+        for backup in backups.iter().skip(keep_count) {
+            if let Err(e) = fs::remove_file(backup.path()) {
+                eprintln!("Failed to remove old backup: {}", e);
+            }
+        }
+    }
+    
     Ok(())
 }
 
@@ -216,13 +297,30 @@ pub fn save_conversations(
 ) -> Result<(), String> {
     let file_path = get_conversations_file_path(&app_handle)?;
     
+    // Create backup before saving
+    if file_path.exists() {
+        create_backup(&app_handle, &file_path, "conversation")?;
+    }
+    
     let json_content = serde_json::to_string_pretty(&payload.conversations)
         .map_err(|e| format!("Failed to serialize conversations: {}", e))?;
 
-    fs::write(&file_path, json_content)
-        .map_err(|e| format!("Failed to write conversations file: {}", e))?;
+    // Write to temporary file first
+    let temp_path = file_path.with_extension("tmp");
+    let mut temp_file = fs::File::create(&temp_path)
+        .map_err(|e| format!("Failed to create temporary file: {}", e))?;
+    
+    temp_file.write_all(json_content.as_bytes())
+        .map_err(|e| format!("Failed to write to temporary file: {}", e))?;
+    
+    temp_file.sync_all()
+        .map_err(|e| format!("Failed to sync temporary file: {}", e))?;
+    
+    // Atomically rename temp file to actual file
+    fs::rename(&temp_path, &file_path)
+        .map_err(|e| format!("Failed to rename temporary file: {}", e))?;
 
-    println!("Conversations saved to: {:?}", file_path);
+    println!("Conversations saved safely to: {:?}", file_path);
     Ok(())
 }
 
@@ -287,6 +385,11 @@ pub fn delete_conversation(
 pub fn clear_all_conversations(app_handle: AppHandle) -> Result<(), String> {
     let file_path = get_conversations_file_path(&app_handle)?;
     
+    // Create backup before clearing
+    if file_path.exists() {
+        create_backup(&app_handle, &file_path, "conversation_cleared")?;
+    }
+    
     // Write empty array
     let empty_conversations: Vec<ConversationSession> = Vec::new();
     let json_content = serde_json::to_string_pretty(&empty_conversations)
@@ -297,4 +400,87 @@ pub fn clear_all_conversations(app_handle: AppHandle) -> Result<(), String> {
 
     println!("Cleared all conversations in: {:?}", file_path);
     Ok(())
+}
+
+#[tauri::command]
+pub fn restore_from_backup(
+    app_handle: AppHandle,
+    backup_type: String,
+    backup_filename: String,
+) -> Result<(), String> {
+    let backup_dir = get_backup_dir(&app_handle)?;
+    let backup_path = backup_dir.join(&backup_filename);
+    
+    if !backup_path.exists() {
+        return Err(format!("Backup file not found: {}", backup_filename));
+    }
+    
+    let target_path = match backup_type.as_str() {
+        "chat" => get_chats_file_path(&app_handle)?,
+        "conversation" => get_conversations_file_path(&app_handle)?,
+        _ => return Err(format!("Invalid backup type: {}", backup_type)),
+    };
+    
+    // Create backup of current data before restoring
+    if target_path.exists() {
+        create_backup(&app_handle, &target_path, &format!("{}_before_restore", backup_type))?;
+    }
+    
+    fs::copy(&backup_path, &target_path)
+        .map_err(|e| format!("Failed to restore from backup: {}", e))?;
+    
+    println!("Restored from backup: {:?} to {:?}", backup_path, target_path);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn list_backups(app_handle: AppHandle) -> Result<Vec<BackupInfo>, String> {
+    let backup_dir = get_backup_dir(&app_handle)?;
+    
+    let mut backups = Vec::new();
+    
+    for entry in fs::read_dir(&backup_dir)
+        .map_err(|e| format!("Failed to read backup directory: {}", e))? {
+        
+        if let Ok(entry) = entry {
+            if let Ok(metadata) = entry.metadata() {
+                if metadata.is_file() {
+                    let filename = entry.file_name().to_string_lossy().to_string();
+                    let backup_type = if filename.starts_with("chat_") {
+                        "chat".to_string()
+                    } else if filename.starts_with("conversation_") {
+                        "conversation".to_string()
+                    } else {
+                        continue;
+                    };
+                    
+                    let modified = metadata.modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    
+                    backups.push(BackupInfo {
+                        filename,
+                        backup_type,
+                        size: metadata.len(),
+                        modified,
+                    });
+                }
+            }
+        }
+    }
+    
+    // Sort by modification time (newest first)
+    backups.sort_by(|a, b| b.modified.cmp(&a.modified));
+    
+    Ok(backups)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BackupInfo {
+    pub filename: String,
+    pub backup_type: String,
+    pub size: u64,
+    pub modified: i64,
 } 
