@@ -268,7 +268,7 @@ const stopAudioLoopbackCapture = async () => {
   }
 }
 
-// Microphone toggle
+// Microphone toggle with robust save handling
 const toggleMicrophone = async () => {
   if (isRecording.value) {
     await stopRecording()
@@ -278,29 +278,57 @@ const toggleMicrophone = async () => {
       // Get session ID before ending it
       const sessionId = conversationStore.currentSession.id
       
-      // End the current session (now async with immediate save)
-      await conversationStore.endSession()
-      console.log('🏁 ConversationalWindow: Session ended:', sessionId)
-      
-      // Small delay to ensure backend persistence completes
-      await new Promise(resolve => setTimeout(resolve, 500))
-      
-      // Refresh conversation list to show the newly ended session
-      await loadConversations()
-      console.log('📁 ConversationalWindow: After ending session and loading, allConversations:', allConversations.value.length)
+      try {
+        console.log('🏁 ConversationalWindow: Ending session with robust save handling:', sessionId)
+        
+        // Complete the session without clearing it (keeps conversation visible for review)
+        await conversationStore.completeSession()
+        console.log('🏁 ConversationalWindow: Session completed successfully:', sessionId)
+        
+        // Wait for any pending saves to complete
+        await conversationStore.waitForSaveCompletion()
+        console.log('🏁 ConversationalWindow: All saves completed')
+        
+        // Refresh conversation list to show the newly ended session
+        await loadConversations()
+        console.log('📁 ConversationalWindow: After ending session and loading, allConversations:', allConversations.value.length)
+        
+      } catch (error) {
+        console.error('🏁 ConversationalWindow: Failed to end session properly:', error)
+        // Even if ending failed, try to refresh the conversation list
+        await loadConversations()
+      }
     }
   } else {
-    if (!conversationStore.currentSession) {
-      // Create a new session if none exists
-      const session = conversationStore.createSession()
-      console.log('🆕 ConversationalWindow: Created new session:', session.id)
-    } else {
-      console.log('🔄 ConversationalWindow: Using existing session:', conversationStore.currentSession.id)
-    }
-    
-    await startRecording()
-    if (audioLoopbackDeviceId.value) {
-      await startAudioLoopbackCapture()
+    try {
+      if (!conversationStore.currentSession) {
+        // Create a new session if none exists
+        console.log('🆕 ConversationalWindow: Creating new session')
+        const session = conversationStore.createSession()
+        console.log('🆕 ConversationalWindow: Created new session:', session.id)
+        
+        // Wait for the session creation save to complete
+        await conversationStore.waitForSaveCompletion()
+        console.log('🆕 ConversationalWindow: Session creation save completed')
+      } else if (conversationStore.currentSession.endTime) {
+        // Resume the current session if it's completed
+        console.log('▶️ ConversationalWindow: Resuming completed session:', conversationStore.currentSession.id)
+        await conversationStore.resumeSession(conversationStore.currentSession.id)
+        console.log('▶️ ConversationalWindow: Session resumed successfully')
+        
+        // Wait for the resume save to complete
+        await conversationStore.waitForSaveCompletion()
+        console.log('▶️ ConversationalWindow: Session resume save completed')
+      } else {
+        console.log('🔄 ConversationalWindow: Using existing active session:', conversationStore.currentSession.id)
+      }
+      
+      await startRecording()
+      if (audioLoopbackDeviceId.value) {
+        await startAudioLoopbackCapture()
+      }
+    } catch (error) {
+      console.error('🆕 ConversationalWindow: Failed to start recording session:', error)
     }
   }
 }

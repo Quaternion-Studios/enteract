@@ -49,20 +49,40 @@ export function useConversationManagement() {
   const createNewConversation = async () => {
     try {
       // Create new conversation through session creation
+      console.log('🆕 ConversationManagement: Creating new session')
       const session = conversationStore.createSession()
       console.log('🆕 ConversationManagement: Created new session:', session.id)
+      
+      // Wait for the save to complete before loading conversations
+      await conversationStore.waitForSaveCompletion()
+      console.log('🆕 ConversationManagement: Session save completed')
+      
       await loadConversations()
+      console.log('🆕 ConversationManagement: Conversations reloaded after new session creation')
     } catch (error) {
       console.error('Failed to create new conversation:', error)
     }
   }
   
-  const resumeConversation = async (conversationId: string) => {
+  const resumeConversation = async (conversationId: string, forEditing = false) => {
     try {
-      // Switch to the selected session
-      conversationStore.switchToSession(conversationId)
-      console.log('🔄 ConversationManagement: Switched to session:', conversationId)
+      if (forEditing) {
+        // Resume session for editing/adding new messages
+        console.log('▶️ ConversationManagement: Resuming session for editing:', conversationId)
+        await conversationStore.resumeSession(conversationId)
+        console.log('▶️ ConversationManagement: Session resumed for editing:', conversationId)
+      } else {
+        // Just switch to view the session
+        console.log('🔄 ConversationManagement: Switching to session for viewing:', conversationId)
+        conversationStore.switchToSession(conversationId)
+        console.log('🔄 ConversationManagement: Switched to session:', conversationId)
+      }
+      
+      // Wait for any pending saves to complete
+      await conversationStore.waitForSaveCompletion()
+      
       await loadConversations()
+      console.log('🔄 ConversationManagement: Conversations reloaded after session operation')
     } catch (error) {
       console.error('Failed to resume conversation:', error)
     }
@@ -71,9 +91,15 @@ export function useConversationManagement() {
   const deleteConversation = async (conversationId: string) => {
     try {
       // Delete the session from the store
+      console.log('🗑️ ConversationManagement: Deleting session:', conversationId)
       await conversationStore.deleteSession(conversationId)
       console.log('🗑️ ConversationManagement: Deleted session:', conversationId)
+      
+      // Wait for any pending saves to complete
+      await conversationStore.waitForSaveCompletion()
+      
       await loadConversations()
+      console.log('🗑️ ConversationManagement: Conversations reloaded after deletion')
     } catch (error) {
       console.error('Failed to delete conversation:', error)
     }
