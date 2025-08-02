@@ -112,6 +112,27 @@ const generalSettings = ref({
   autoRestoreOnError: true
 })
 
+// System Information
+interface GpuInfo {
+  name: string
+  vendor: string
+  driver_version?: string
+  memory_mb?: number
+  temperature_celsius?: number
+  utilization_percent?: number
+}
+
+interface SystemInfo {
+  gpus: GpuInfo[]
+  cpu_name: string
+  memory_gb: number
+  os: string
+}
+
+const systemInfo = ref<SystemInfo | null>(null)
+const isLoadingSystemInfo = ref(false)
+const systemInfoError = ref<string | null>(null)
+
 // Transparency composable
 const transparency = useTransparency()
 
@@ -401,7 +422,34 @@ const selectAudioDevice = async (deviceId: string) => {
 
 onMounted(() => {
   loadSettings()
+  fetchSystemInfo()
 })
+
+// Fetch system information
+const fetchSystemInfo = async () => {
+  isLoadingSystemInfo.value = true
+  systemInfoError.value = null
+  
+  try {
+    const info = await invoke<SystemInfo>('get_system_info')
+    systemInfo.value = info
+    console.log('💻 System info loaded:', info)
+  } catch (error) {
+    console.error('Failed to fetch system info:', error)
+    systemInfoError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    isLoadingSystemInfo.value = false
+  }
+}
+
+// Format GPU memory
+const formatGpuMemory = (memoryMb?: number): string => {
+  if (!memoryMb) return 'Unknown'
+  if (memoryMb >= 1024) {
+    return `${(memoryMb / 1024).toFixed(1)} GB`
+  }
+  return `${memoryMb} MB`
+}
 </script>
 
 <template>
@@ -1004,6 +1052,82 @@ onMounted(() => {
                     Restore
                   </button>
                 </div>
+              </div>
+              
+              <div class="setting-separator"></div>
+              
+              <!-- System Information -->
+              <h4 class="text-white/80 text-sm font-medium mb-3">System Information</h4>
+              
+              <div v-if="isLoadingSystemInfo" class="text-white/60 text-sm">
+                Loading system information...
+              </div>
+              
+              <div v-else-if="systemInfoError" class="text-red-400 text-sm">
+                Failed to load system info: {{ systemInfoError }}
+              </div>
+              
+              <div v-else-if="systemInfo" class="system-info">
+                <div class="info-item">
+                  <span class="info-label">OS:</span>
+                  <span class="info-value">{{ systemInfo.os }}</span>
+                </div>
+                
+                <div class="info-item">
+                  <span class="info-label">CPU:</span>
+                  <span class="info-value">{{ systemInfo.cpu_name }}</span>
+                </div>
+                
+                <div class="info-item">
+                  <span class="info-label">Memory:</span>
+                  <span class="info-value">{{ systemInfo.memory_gb.toFixed(1) }} GB</span>
+                </div>
+                
+                <div v-if="systemInfo.gpus.length > 0" class="gpu-section">
+                  <div class="info-item">
+                    <span class="info-label">GPU{{ systemInfo.gpus.length > 1 ? 's' : '' }}:</span>
+                  </div>
+                  
+                  <div v-for="(gpu, index) in systemInfo.gpus" :key="index" class="gpu-info">
+                    <div class="gpu-header">
+                      <CpuChipIcon class="w-4 h-4 text-white/60" />
+                      <span class="gpu-name">{{ gpu.name }}</span>
+                      <span class="gpu-vendor">({{ gpu.vendor }})</span>
+                    </div>
+                    
+                    <div class="gpu-details">
+                      <div v-if="gpu.memory_mb" class="gpu-detail">
+                        <span class="detail-label">Memory:</span>
+                        <span class="detail-value">{{ formatGpuMemory(gpu.memory_mb) }}</span>
+                      </div>
+                      
+                      <div v-if="gpu.driver_version" class="gpu-detail">
+                        <span class="detail-label">Driver:</span>
+                        <span class="detail-value">{{ gpu.driver_version }}</span>
+                      </div>
+                      
+                      <div v-if="gpu.temperature_celsius !== undefined" class="gpu-detail">
+                        <span class="detail-label">Temperature:</span>
+                        <span class="detail-value">{{ gpu.temperature_celsius }}°C</span>
+                      </div>
+                      
+                      <div v-if="gpu.utilization_percent !== undefined" class="gpu-detail">
+                        <span class="detail-label">Usage:</span>
+                        <span class="detail-value">{{ gpu.utilization_percent }}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <div v-else class="info-item">
+                  <span class="info-label">GPU:</span>
+                  <span class="info-value text-white/60">No dedicated GPU detected</span>
+                </div>
+                
+                <button @click="fetchSystemInfo" class="refresh-button mt-3">
+                  <ArrowsPointingOutIcon class="w-4 h-4" />
+                  Refresh System Info
+                </button>
               </div>
             </div>
           </div>
@@ -1721,5 +1845,62 @@ onMounted(() => {
 .tab-content {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+/* System Information Styles */
+.system-info {
+  @apply space-y-2;
+}
+
+.info-item {
+  @apply flex items-center gap-2 text-sm;
+}
+
+.info-label {
+  @apply text-white/60 font-medium min-w-[80px];
+}
+
+.info-value {
+  @apply text-white/90;
+}
+
+.gpu-section {
+  @apply mt-3 space-y-3;
+}
+
+.gpu-info {
+  @apply bg-white/5 rounded-lg p-3 border border-white/10;
+}
+
+.gpu-header {
+  @apply flex items-center gap-2 mb-2;
+}
+
+.gpu-name {
+  @apply text-white/90 font-medium text-sm;
+}
+
+.gpu-vendor {
+  @apply text-white/60 text-xs;
+}
+
+.gpu-details {
+  @apply grid grid-cols-2 gap-2 text-xs;
+}
+
+.gpu-detail {
+  @apply flex items-center gap-1;
+}
+
+.detail-label {
+  @apply text-white/50;
+}
+
+.detail-value {
+  @apply text-white/80;
+}
+
+.refresh-button {
+  @apply flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white/80 hover:text-white rounded-lg transition-colors text-sm;
 }
 </style>

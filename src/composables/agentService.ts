@@ -8,6 +8,7 @@ let messageIdCounter = 1
 
 export class AgentService {
   private static scrollChatToBottom: () => void
+  private static activeSessionIds: Map<number, string> = new Map() // Map message ID to session ID
 
   static init(scrollCallback: () => void) {
     AgentService.scrollChatToBottom = scrollCallback
@@ -134,6 +135,9 @@ export class AgentService {
       // Generate unique session ID for streaming
       const sessionId = `chat-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
       
+      // Store the session ID mapped to the streaming message
+      const streamingMessageId = messageIdCounter
+      
       // Get appropriate model and agent name based on agent type
       let modelToUse = selectedModel || 'gemma3:1b-it-qat'
       let agentName = 'Enteract AI'
@@ -162,12 +166,18 @@ export class AgentService {
       const currentHistory = SessionManager.getCurrentChatHistory().value
       const streamingMessageIndex = currentHistory.length
       SessionManager.addMessageToCurrentChat({
-        id: messageIdCounter++,
+        id: streamingMessageId,
         sender: 'assistant',
         text: `🤖 ${agentName} is thinking▋`,
         timestamp: new Date(),
-        messageType: 'text'
+        messageType: 'text',
+        isStreaming: true,
+        sessionId: sessionId
       })
+      messageIdCounter++
+      
+      // Store the mapping
+      AgentService.activeSessionIds.set(streamingMessageId, sessionId)
       
       setTimeout(() => {
         AgentService.scrollChatToBottom()
@@ -309,10 +319,26 @@ export class AgentService {
             }
             break
             
+          case 'cancelled':
+            isTyping = false
+            console.log(`🛑 ${agentType} streaming cancelled by user`)
+            if (currentHistory[streamingMessageIndex]) {
+              currentHistory[streamingMessageIndex].text = `❌ Response cancelled by user`
+              currentHistory[streamingMessageIndex].isStreaming = false
+            }
+            // Clean up
+            AgentService.activeSessionIds.delete(streamingMessageId)
+            unlisten()
+            break
+            
           case 'complete':
             isTyping = false
             console.log(`🎉 ${agentType} streaming session completed`)
-            // Clean up listener
+            if (currentHistory[streamingMessageIndex]) {
+              currentHistory[streamingMessageIndex].isStreaming = false
+            }
+            // Clean up
+            AgentService.activeSessionIds.delete(streamingMessageId)
             unlisten()
             break
         }
@@ -407,5 +433,20 @@ export class AgentService {
     setTimeout(() => {
       AgentService.scrollChatToBottom()
     }, 50)
+  }
+  
+  // Cancel an active AI response
+  static async cancelResponse(messageId: number) {
+    const sessionId = AgentService.activeSessionIds.get(messageId)
+    if (sessionId) {
+      try {
+        await invoke('cancel_ai_response', { sessionId })
+        console.log(`🛑 Cancellation requested for message ${messageId}, session ${sessionId}`)
+      } catch (error) {
+        console.error('Failed to cancel AI response:', error)
+      }
+    } else {
+      console.warn(`No active session found for message ${messageId}`)
+    }
   }
 }
