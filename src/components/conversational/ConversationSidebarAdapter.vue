@@ -15,6 +15,7 @@ interface Emits {
   (e: 'close'): void
   (e: 'new-conversation'): void
   (e: 'resume-conversation', id: string): void
+  (e: 'rename-conversation', id: string, newName: string): void
   (e: 'delete-conversation', id: string): void
 }
 
@@ -35,8 +36,7 @@ const handleNewItem = () => emit('new-conversation')
 const handleSelectItem = (id: string) => emit('resume-conversation', id)
 const handleDeleteItem = (id: string) => emit('delete-conversation', id)
 const handleRenameItem = (id: string, newTitle: string) => {
-  // Rename functionality could be added here if needed
-  console.log('Rename conversation:', id, newTitle)
+  emit('rename-conversation', id, newTitle)
 }
 </script>
 
@@ -53,7 +53,7 @@ const handleRenameItem = (id: string, newTitle: string) => {
     display-mode="inline"
     :show-new-button="true"
     :show-delete-button="true"
-    :show-rename-button="false"
+    :show-rename-button="true"
     :show-clear-all-button="false"
     :show-timestamps="true"
     :show-metadata="true"

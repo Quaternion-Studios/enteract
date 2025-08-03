@@ -97,6 +97,7 @@ const {
   loadConversations,
   createNewConversation,
   resumeConversation,
+  renameConversation,
   deleteConversation
 } = useConversationManagement()
 
@@ -304,7 +305,7 @@ const toggleMicrophone = async () => {
       if (!conversationStore.currentSession) {
         // Create a new session if none exists
         console.log('🆕 ConversationalWindow: Creating new session')
-        const session = conversationStore.createSession()
+        const session = await conversationStore.createSession()
         console.log('🆕 ConversationalWindow: Created new session:', session.id)
         
         // Wait for the session creation save to complete
@@ -396,6 +397,10 @@ const handleNewConversation = async () => {
 const handleResumeConversation = async (id: string) => {
   await resumeConversation(id)
   showConversationSidebar.value = false
+}
+
+const handleRenameConversation = async (id: string, newName: string) => {
+  await renameConversation(id, newName)
 }
 
 const handleDeleteConversation = async (id: string) => {
@@ -535,6 +540,7 @@ const formatSessionDuration = () => {
           @close="showConversationSidebar = false"
           @new-conversation="handleNewConversation"
           @resume-conversation="handleResumeConversation"
+          @rename-conversation="handleRenameConversation"
           @delete-conversation="handleDeleteConversation"
         />
         
