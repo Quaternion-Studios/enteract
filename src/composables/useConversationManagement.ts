@@ -50,7 +50,7 @@ export function useConversationManagement() {
     try {
       // Create new conversation through session creation
       console.log('🆕 ConversationManagement: Creating new session')
-      const session = conversationStore.createSession()
+      const session = await conversationStore.createSession()
       console.log('🆕 ConversationManagement: Created new session:', session.id)
       
       // Wait for the save to complete before loading conversations
@@ -88,6 +88,28 @@ export function useConversationManagement() {
     }
   }
   
+  const renameConversation = async (conversationId: string, newName: string) => {
+    try {
+      if (!newName || !newName.trim()) {
+        throw new Error('Conversation name cannot be empty')
+      }
+      
+      // Rename the session in the store
+      console.log('✏️ ConversationManagement: Renaming session:', conversationId, 'to', newName)
+      await conversationStore.renameSession(conversationId, newName)
+      console.log('✏️ ConversationManagement: Renamed session:', conversationId)
+      
+      // Wait for any pending saves to complete
+      await conversationStore.waitForSaveCompletion()
+      
+      await loadConversations()
+      console.log('✏️ ConversationManagement: Conversations reloaded after rename')
+    } catch (error) {
+      console.error('Failed to rename conversation:', error)
+      throw error // Re-throw so UI can handle it
+    }
+  }
+  
   const deleteConversation = async (conversationId: string) => {
     try {
       // Delete the session from the store
@@ -111,6 +133,7 @@ export function useConversationManagement() {
     loadConversations,
     createNewConversation,
     resumeConversation,
+    renameConversation,
     deleteConversation
   }
 }

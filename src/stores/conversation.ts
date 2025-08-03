@@ -145,7 +145,7 @@ export const useConversationStore = defineStore('conversation', () => {
   })
 
   // Actions
-  const createSession = (name?: string): ConversationSession => {
+  const createSession = async (name?: string): Promise<ConversationSession> => {
     console.log('🆕 Store: Creating new session')
     
     // Disable auto-save during session creation to prevent race conditions
@@ -170,15 +170,19 @@ export const useConversationStore = defineStore('conversation', () => {
       currentSession.value = session
       console.log('🆕 Store: Session created successfully:', session.id)
       
-      // Force immediate save of new session
-      saveSessions(true).catch(console.error)
+      // Force immediate save of new session and wait for completion
+      await saveSessions(true)
       
       return session
     } finally {
-      // Re-enable auto-save after a short delay
-      setTimeout(() => {
-        autoSaveEnabled.value = true
-      }, 500)
+      // Re-enable auto-save immediately after successful save
+      autoSaveEnabled.value = true
+      
+      // Process any pending saves that accumulated during the disable period
+      if (pendingSave.value) {
+        console.log('💾 Store: Processing pending save after session creation')
+        setTimeout(() => saveSessions().catch(console.error), 100)
+      }
     }
   }
 
@@ -355,6 +359,13 @@ export const useConversationStore = defineStore('conversation', () => {
     
     console.log(`📝 Added message to session ${currentSession.value.id}:`, message.content.substring(0, 50))
     console.log(`📝 Session now has ${currentSession.value.messages.length} total messages`)
+    
+    // Force a save every 5 messages to ensure messages don't get lost
+    if (currentSession.value.messages.length % 5 === 0) {
+      console.log('💾 Store: Auto-saving due to message count milestone')
+      saveSessions().catch(console.error)
+    }
+    
     return message
   }
 
@@ -386,6 +397,44 @@ export const useConversationStore = defineStore('conversation', () => {
   const clearCurrentSession = () => {
     if (currentSession.value) {
       currentSession.value.messages = []
+    }
+  }
+
+  const renameSession = async (sessionId: string, newName: string) => {
+    if (!newName || !newName.trim()) {
+      throw new Error('Session name cannot be empty')
+    }
+    
+    try {
+      console.log(`✏️ Store: Renaming session ${sessionId} to "${newName}"`)
+      
+      const session = sessions.value.find(s => s.id === sessionId)
+      if (!session) {
+        throw new Error(`Session ${sessionId} not found`)
+      }
+      
+      // Disable auto-save during rename operation
+      autoSaveEnabled.value = false
+      
+      try {
+        const trimmedName = newName.trim()
+        const oldName = session.name
+        session.name = trimmedName
+        console.log(`✏️ Store: Session renamed from "${oldName}" to "${trimmedName}": ${sessionId}`)
+        
+        // Force immediate save to persist the rename
+        await saveSessions(true)
+        console.log(`✏️ Store: Rename saved successfully`)
+        
+      } finally {
+        // Re-enable auto-save
+        autoSaveEnabled.value = true
+      }
+      
+      return session
+    } catch (error) {
+      console.error('✏️ Store: Failed to rename conversation session:', error)
+      throw error
     }
   }
 
@@ -457,19 +506,54 @@ export const useConversationStore = defineStore('conversation', () => {
 
     const microphoneMessages = session.messages.filter(m => m.source === 'microphone')
     const loopbackMessages = session.messages.filter(m => m.source === 'loopback')
+    const userMessages = session.messages.filter(m => m.type === 'user')
+    const systemMessages = session.messages.filter(m => m.type === 'system')
     const duration = session.endTime 
       ? session.endTime - session.startTime 
       : Date.now() - session.startTime
 
+    const confidenceValues = session.messages
+      .filter(m => m.confidence !== undefined)
+      .map(m => m.confidence || 0)
+
     return {
       totalMessages: session.messages.length,
+      userMessages: userMessages.length,
+      systemMessages: systemMessages.length,
       microphoneMessages: microphoneMessages.length,
       loopbackMessages: loopbackMessages.length,
       duration: Math.round(duration / 1000), // in seconds
-      averageConfidence: session.messages
-        .filter(m => m.confidence !== undefined)
-        .reduce((sum, m) => sum + (m.confidence || 0), 0) / 
-        session.messages.filter(m => m.confidence !== undefined).length
+      averageConfidence: confidenceValues.length > 0 
+        ? confidenceValues.reduce((sum, conf) => sum + conf, 0) / confidenceValues.length
+        : 0,
+      isActive: session.isActive,
+      isCompleted: !!session.endTime,
+      isResumed: session.name.includes('(Resumed)') || session.name.includes('(Edited)')
+    }
+  }
+  
+  // Get all conversation statistics for dashboard/debugging
+  const getAllConversationStats = () => {
+    return {
+      totalConversations: sessions.value.length,
+      activeConversations: sessions.value.filter(s => s.isActive).length,
+      completedConversations: sessions.value.filter(s => s.endTime).length,
+      totalMessages: sessions.value.reduce((sum, s) => sum + s.messages.length, 0),
+      averageMessagesPerConversation: sessions.value.length > 0 
+        ? sessions.value.reduce((sum, s) => sum + s.messages.length, 0) / sessions.value.length 
+        : 0,
+      longestConversation: sessions.value.length > 0 
+        ? sessions.value.reduce((longest, current) => 
+            current.messages.length > longest.messages.length ? current : longest)
+        : null,
+      oldestConversation: sessions.value.length > 0
+        ? sessions.value.reduce((oldest, current) => 
+            current.startTime < oldest.startTime ? current : oldest)
+        : null,
+      newestConversation: sessions.value.length > 0
+        ? sessions.value.reduce((newest, current) => 
+            current.startTime > newest.startTime ? current : newest)
+        : null
     }
   }
 
@@ -581,11 +665,13 @@ export const useConversationStore = defineStore('conversation', () => {
     updateMessage,
     deleteMessage,
     clearCurrentSession,
+    renameSession,
     deleteSession,
     setRecordingState,
     setAudioLoopbackState,
     exportMessagesToMainChat,
     getSessionStats,
+    getAllConversationStats,
     
     // Persistence actions
     loadSessions,
