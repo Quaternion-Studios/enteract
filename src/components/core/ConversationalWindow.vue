@@ -22,6 +22,7 @@ import ConversationSidebarAdapter from '../conversational/ConversationSidebarAda
 import AIAssistant from '../conversational/AIAssistant.vue'
 import LiveAI from '../conversational/LiveAI.vue'
 import ExportControls from '../conversational/ExportControls.vue'
+import MessageSaveIndicator from '../MessageSaveIndicator.vue'
 
 // Composables
 import { useLoopbackTranscription } from '../../composables/useLoopbackTranscription'
@@ -587,6 +588,14 @@ const formatSessionDuration = () => {
                 <div v-if="conversationStore.currentSession" class="status-item time-item">
                   <span class="time-label">{{ formatSessionDuration() }}</span>
                 </div>
+                
+                <!-- Message Save Status -->
+                <div class="save-status-container">
+                  <MessageSaveIndicator 
+                    :show-global-status="true" 
+                    :show-stats="false" 
+                  />
+                </div>
               </div>
 
               <!-- Compact Action Button -->
@@ -846,6 +855,10 @@ const formatSessionDuration = () => {
 
 .time-label {
   @apply text-xs text-blue-300 font-mono;
+}
+
+.save-status-container {
+  @apply flex items-center;
 }
 
 /* Compact Action Button */

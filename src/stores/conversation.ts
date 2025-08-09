@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useMessagePersistence } from '../composables/useMessagePersistence'
 
 export interface ConversationMessage {
   id: string
@@ -11,6 +12,10 @@ export interface ConversationMessage {
   confidence?: number
   isPreview?: boolean
   isTyping?: boolean
+  persistenceState?: 'pending' | 'saving' | 'saved' | 'failed'
+  retryCount?: number
+  lastSaveAttempt?: number
+  saveError?: string
 }
 
 export interface ConversationSession {
@@ -23,6 +28,9 @@ export interface ConversationSession {
 }
 
 export const useConversationStore = defineStore('conversation', () => {
+  // Initialize message persistence
+  const messagePersistence = useMessagePersistence()
+  
   // State
   const currentSession = ref<ConversationSession | null>(null)
   const sessions = ref<ConversationSession[]>([])
@@ -341,10 +349,15 @@ export const useConversationStore = defineStore('conversation', () => {
 
     const message: ConversationMessage = {
       id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      persistenceState: 'pending',
       ...messageData
     }
 
     currentSession.value.messages.push(message)
+    
+    // Immediately queue the message for saving
+    messagePersistence.queueMessage(message, currentSession.value.id)
+    console.log(`💾 Queued message for immediate save: ${message.id}`)
     
     // If this is a resumed session (has endTime), update it to show continued activity
     if (currentSession.value.endTime) {
@@ -360,16 +373,10 @@ export const useConversationStore = defineStore('conversation', () => {
     console.log(`📝 Added message to session ${currentSession.value.id}:`, message.content.substring(0, 50))
     console.log(`📝 Session now has ${currentSession.value.messages.length} total messages`)
     
-    // Force a save every 5 messages to ensure messages don't get lost
-    if (currentSession.value.messages.length % 5 === 0) {
-      console.log('💾 Store: Auto-saving due to message count milestone')
-      saveSessions().catch(console.error)
-    }
-    
     return message
   }
 
-  const updateMessage = (messageId: string, updates: Partial<ConversationMessage>) => {
+  const updateMessage = async (messageId: string, updates: Partial<ConversationMessage>) => {
     if (!currentSession.value) return null
 
     const messageIndex = currentSession.value.messages.findIndex(m => m.id === messageId)
@@ -378,16 +385,30 @@ export const useConversationStore = defineStore('conversation', () => {
         ...currentSession.value.messages[messageIndex],
         ...updates
       }
-      return currentSession.value.messages[messageIndex]
+      
+      // Update in backend if message was already saved
+      const message = currentSession.value.messages[messageIndex]
+      if (message.persistenceState === 'saved') {
+        await messagePersistence.updateMessage(messageId, currentSession.value.id, updates)
+      }
+      
+      return message
     }
     return null
   }
 
-  const deleteMessage = (messageId: string) => {
+  const deleteMessage = async (messageId: string) => {
     if (!currentSession.value) return false
 
     const messageIndex = currentSession.value.messages.findIndex(m => m.id === messageId)
     if (messageIndex !== -1) {
+      const message = currentSession.value.messages[messageIndex]
+      
+      // Delete from backend if message was saved
+      if (message.persistenceState === 'saved') {
+        await messagePersistence.deleteMessage(messageId, currentSession.value.id)
+      }
+      
       currentSession.value.messages.splice(messageIndex, 1)
       return true
     }
@@ -684,6 +705,10 @@ export const useConversationStore = defineStore('conversation', () => {
     // Auto-save control
     disableAutoSave,
     enableAutoSave,
-    waitForSaveCompletion
+    waitForSaveCompletion,
+    
+    // Message persistence
+    getMessagePersistenceStatus: () => messagePersistence.getQueueStatus(),
+    messagePersistence
   }
 })

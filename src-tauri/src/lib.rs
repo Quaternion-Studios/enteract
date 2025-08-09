@@ -39,7 +39,12 @@ use file_handler::{
     upload_file_base64, validate_file_upload, get_file_upload_config,
     process_clipboard_image, cleanup_temp_files
 };
-use data_store::{save_chat_sessions, load_chat_sessions, save_conversations, load_conversations, delete_conversation, clear_all_conversations, restore_from_backup, list_backups};
+use data_store::{
+    save_chat_sessions, load_chat_sessions, save_conversations, load_conversations, 
+    delete_conversation, clear_all_conversations, restore_from_backup, list_backups,
+    save_conversation_message, batch_save_conversation_messages, 
+    update_conversation_message, delete_conversation_message, ping_backend
+};
 
 // Import new audio loopback commands
 use audio_loopback::{
@@ -157,7 +162,14 @@ pub fn run() {
             process_audio_for_transcription,
             
             // System info
-            get_system_info
+            get_system_info,
+            
+            // Message-level persistence
+            save_conversation_message,
+            batch_save_conversation_messages,
+            update_conversation_message,
+            delete_conversation_message,
+            ping_backend
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

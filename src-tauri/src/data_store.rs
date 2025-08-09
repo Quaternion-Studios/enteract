@@ -483,4 +483,228 @@ pub struct BackupInfo {
     pub backup_type: String,
     pub size: u64,
     pub modified: i64,
+}
+
+// Message-level operations
+#[tauri::command]
+pub fn save_conversation_message(
+    app_handle: AppHandle,
+    session_id: String,
+    message: ConversationMessage,
+) -> Result<(), String> {
+    let file_path = get_conversations_file_path(&app_handle)?;
+    
+    // Load existing conversations
+    let mut conversations = if file_path.exists() {
+        let file_content = fs::read_to_string(&file_path)
+            .map_err(|e| format!("Failed to read conversations file: {}", e))?;
+        serde_json::from_str::<Vec<ConversationSession>>(&file_content)
+            .map_err(|e| format!("Failed to deserialize conversations: {}", e))?
+    } else {
+        Vec::new()
+    };
+    
+    // Find the session
+    let session = conversations.iter_mut()
+        .find(|s| s.id == session_id)
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    
+    // Check if message already exists (deduplication)
+    if session.messages.iter().any(|m| m.id == message.id) {
+        return Ok(()); // Message already saved
+    }
+    
+    // Add the message
+    session.messages.push(message);
+    
+    // Save to file atomically
+    let json_content = serde_json::to_string_pretty(&conversations)
+        .map_err(|e| format!("Failed to serialize conversations: {}", e))?;
+    
+    let temp_path = file_path.with_extension("tmp");
+    let mut temp_file = fs::File::create(&temp_path)
+        .map_err(|e| format!("Failed to create temporary file: {}", e))?;
+    
+    temp_file.write_all(json_content.as_bytes())
+        .map_err(|e| format!("Failed to write to temporary file: {}", e))?;
+    
+    temp_file.sync_all()
+        .map_err(|e| format!("Failed to sync temporary file: {}", e))?;
+    
+    fs::rename(&temp_path, &file_path)
+        .map_err(|e| format!("Failed to rename temporary file: {}", e))?;
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub fn batch_save_conversation_messages(
+    app_handle: AppHandle,
+    session_id: String,
+    messages: Vec<ConversationMessage>,
+) -> Result<(), String> {
+    let file_path = get_conversations_file_path(&app_handle)?;
+    
+    // Load existing conversations
+    let mut conversations = if file_path.exists() {
+        let file_content = fs::read_to_string(&file_path)
+            .map_err(|e| format!("Failed to read conversations file: {}", e))?;
+        serde_json::from_str::<Vec<ConversationSession>>(&file_content)
+            .map_err(|e| format!("Failed to deserialize conversations: {}", e))?
+    } else {
+        Vec::new()
+    };
+    
+    // Find the session
+    let session = conversations.iter_mut()
+        .find(|s| s.id == session_id)
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    
+    // Add messages (with deduplication)
+    for message in messages {
+        if !session.messages.iter().any(|m| m.id == message.id) {
+            session.messages.push(message);
+        }
+    }
+    
+    // Save to file atomically
+    let json_content = serde_json::to_string_pretty(&conversations)
+        .map_err(|e| format!("Failed to serialize conversations: {}", e))?;
+    
+    let temp_path = file_path.with_extension("tmp");
+    let mut temp_file = fs::File::create(&temp_path)
+        .map_err(|e| format!("Failed to create temporary file: {}", e))?;
+    
+    temp_file.write_all(json_content.as_bytes())
+        .map_err(|e| format!("Failed to write to temporary file: {}", e))?;
+    
+    temp_file.sync_all()
+        .map_err(|e| format!("Failed to sync temporary file: {}", e))?;
+    
+    fs::rename(&temp_path, &file_path)
+        .map_err(|e| format!("Failed to rename temporary file: {}", e))?;
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_conversation_message(
+    app_handle: AppHandle,
+    session_id: String,
+    message_id: String,
+    updates: ConversationMessageUpdate,
+) -> Result<(), String> {
+    let file_path = get_conversations_file_path(&app_handle)?;
+    
+    if !file_path.exists() {
+        return Err("Conversations file does not exist".to_string());
+    }
+    
+    let file_content = fs::read_to_string(&file_path)
+        .map_err(|e| format!("Failed to read conversations file: {}", e))?;
+    
+    let mut conversations: Vec<ConversationSession> = serde_json::from_str(&file_content)
+        .map_err(|e| format!("Failed to deserialize conversations: {}", e))?;
+    
+    // Find the session and message
+    let session = conversations.iter_mut()
+        .find(|s| s.id == session_id)
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    
+    let message = session.messages.iter_mut()
+        .find(|m| m.id == message_id)
+        .ok_or_else(|| format!("Message {} not found", message_id))?;
+    
+    // Apply updates
+    if let Some(content) = updates.content {
+        message.content = content;
+    }
+    if let Some(confidence) = updates.confidence {
+        message.confidence = Some(confidence);
+    }
+    if let Some(timestamp) = updates.timestamp {
+        message.timestamp = timestamp;
+    }
+    
+    // Save to file atomically
+    let json_content = serde_json::to_string_pretty(&conversations)
+        .map_err(|e| format!("Failed to serialize conversations: {}", e))?;
+    
+    let temp_path = file_path.with_extension("tmp");
+    let mut temp_file = fs::File::create(&temp_path)
+        .map_err(|e| format!("Failed to create temporary file: {}", e))?;
+    
+    temp_file.write_all(json_content.as_bytes())
+        .map_err(|e| format!("Failed to write to temporary file: {}", e))?;
+    
+    temp_file.sync_all()
+        .map_err(|e| format!("Failed to sync temporary file: {}", e))?;
+    
+    fs::rename(&temp_path, &file_path)
+        .map_err(|e| format!("Failed to rename temporary file: {}", e))?;
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_conversation_message(
+    app_handle: AppHandle,
+    session_id: String,
+    message_id: String,
+) -> Result<(), String> {
+    let file_path = get_conversations_file_path(&app_handle)?;
+    
+    if !file_path.exists() {
+        return Err("Conversations file does not exist".to_string());
+    }
+    
+    let file_content = fs::read_to_string(&file_path)
+        .map_err(|e| format!("Failed to read conversations file: {}", e))?;
+    
+    let mut conversations: Vec<ConversationSession> = serde_json::from_str(&file_content)
+        .map_err(|e| format!("Failed to deserialize conversations: {}", e))?;
+    
+    // Find the session
+    let session = conversations.iter_mut()
+        .find(|s| s.id == session_id)
+        .ok_or_else(|| format!("Session {} not found", session_id))?;
+    
+    // Remove the message
+    let original_count = session.messages.len();
+    session.messages.retain(|m| m.id != message_id);
+    
+    if session.messages.len() == original_count {
+        return Err(format!("Message {} not found", message_id));
+    }
+    
+    // Save to file atomically
+    let json_content = serde_json::to_string_pretty(&conversations)
+        .map_err(|e| format!("Failed to serialize conversations: {}", e))?;
+    
+    let temp_path = file_path.with_extension("tmp");
+    let mut temp_file = fs::File::create(&temp_path)
+        .map_err(|e| format!("Failed to create temporary file: {}", e))?;
+    
+    temp_file.write_all(json_content.as_bytes())
+        .map_err(|e| format!("Failed to write to temporary file: {}", e))?;
+    
+    temp_file.sync_all()
+        .map_err(|e| format!("Failed to sync temporary file: {}", e))?;
+    
+    fs::rename(&temp_path, &file_path)
+        .map_err(|e| format!("Failed to rename temporary file: {}", e))?;
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub fn ping_backend() -> Result<String, String> {
+    Ok("pong".to_string())
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConversationMessageUpdate {
+    pub content: Option<String>,
+    pub confidence: Option<f64>,
+    pub timestamp: Option<i64>,
 } 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { MicrophoneIcon, SpeakerWaveIcon, CheckIcon } from '@heroicons/vue/24/outline'
+import MessageSaveIndicator from '../MessageSaveIndicator.vue'
 
 interface Message {
   id: string
@@ -10,6 +11,10 @@ interface Message {
   timestamp: number
   isPreview?: boolean
   isTyping?: boolean
+  persistenceState?: 'pending' | 'saving' | 'saved' | 'failed'
+  retryCount?: number
+  lastSaveAttempt?: number
+  saveError?: string
 }
 
 interface Props {
@@ -71,7 +76,10 @@ const handleClick = (messageId: string) => {
             </div>
           </div>
         </div>
-        <span class="message-time">{{ formatTime(message.timestamp) }}</span>
+        <div class="message-meta">
+          <MessageSaveIndicator :message="message" />
+          <span class="message-time">{{ formatTime(message.timestamp) }}</span>
+        </div>
       </div>
       <div class="message-content">
         {{ message.content }}
@@ -136,6 +144,10 @@ const handleClick = (messageId: string) => {
 
 .source-label {
   @apply font-medium;
+}
+
+.message-meta {
+  @apply flex items-center gap-2;
 }
 
 .message-time {
