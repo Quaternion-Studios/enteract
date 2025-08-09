@@ -169,44 +169,43 @@ async fn stream_ollama_response(
         let mut sessions = ACTIVE_SESSIONS.lock().unwrap();
         sessions.insert(session_id.clone(), false);
     }
-    
+
     let client = Arc::clone(&HTTP_CLIENT);
     match client.post(&url).json(&request).send().await {
         Ok(response) => {
             if response.status().is_success() {
                 let mut stream = response.bytes_stream();
                 let mut buffer = Vec::new();
-                
+
                 while let Some(chunk_result) = stream.next().await {
                     match chunk_result {
                         Ok(chunk) => {
                             buffer.extend_from_slice(&chunk);
-                            
+
                             // Process complete lines from buffer
                             while let Some(newline_pos) = buffer.iter().position(|&b| b == b'\n') {
                                 // Check for cancellation
                                 if is_session_cancelled(&session_id) {
                                     println!("🛑 Session cancelled: {}", session_id);
-                                    
+
                                     if let Err(e) = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
                                         "type": "cancelled",
                                         "message": "Response cancelled by user"
                                     })) {
                                         eprintln!("Failed to emit cancellation event: {}", e);
                                     }
-                                    
+
                                     cleanup_session(&session_id);
                                     return Ok(());
                                 }
-                                
+
                                 let line = buffer.drain(..=newline_pos).collect::<Vec<u8>>();
                                 let line_str = String::from_utf8_lossy(&line[..line.len()-1]);
-                                
-                                // Much lower limit for faster detection
-                                if total_chunks > 800 {
-                                    return Err("Stream exceeded chunk limit - preventing runaway generation".to_string());
+
+                                if line_str.trim().is_empty() {
+                                    continue;
                                 }
-                                
+
                                 match serde_json::from_str::<GenerateResponse>(&line_str) {
                                     Ok(response_chunk) => {
                                         if let Err(e) = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
@@ -216,7 +215,7 @@ async fn stream_ollama_response(
                                         })) {
                                             eprintln!("Failed to emit chunk event: {}", e);
                                         }
-                                        
+
                                         if response_chunk.done {
                                             println!("✅ Agent streaming completed for session: {}", session_id);
                                             cleanup_session(&session_id);
@@ -227,131 +226,58 @@ async fn stream_ollama_response(
                                         eprintln!("Failed to parse streaming response: {} - Line: {}", e, line_str);
                                         continue;
                                     }
-                                    
-                                    match serde_json::from_str::<GenerateResponse>(&line_str) {
-                                        Ok(response_chunk) => {
-                                            if response_chunk.done {
-                                                let _ = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
-                                                    "type": "chunk",
-                                                    "text": response_chunk.response,
-                                                    "done": true
-                                                }));
-                                                return Ok(());
-                                            }
-                                            
-                                            let chunk_text = &response_chunk.response;
-                                            accumulated_text.push_str(chunk_text);
-                                            
-                                            // IMMEDIATE CHUNK-LEVEL DETECTION
-                                            if !chunk_text.trim().is_empty() {
-                                                // Add to recent chunks
-                                                if recent_chunks.len() >= 10 {
-                                                    recent_chunks.pop_front();
-                                                }
-                                                recent_chunks.push_back(chunk_text.to_string());
-                                                
-                                                // 1. FAST: Check for immediate repetition in last 3-5 chunks
-                                                if recent_chunks.len() >= 3 {
-                                                    let last_3: Vec<&String> = recent_chunks.iter().rev().take(3).collect();
-                                                    if last_3.len() == 3 && last_3[0] == last_3[1] && last_3[1] == last_3[2] {
-                                                        return Err(format!("Immediate 3x repetition: '{}'", last_3[0]));
-                                                    }
-                                                }
-                                                
-                                                // 2. FAST: Track markdown section markers
-                                                for marker in &["## 📋", "## 🔍", "## 💡", "```", "- **", "* **"] {
-                                                    if chunk_text.contains(marker) {
-                                                        let count = section_markers.entry(marker.to_string()).or_insert(0);
-                                                        *count += 1;
-                                                        
-                                                        // If we see the same section marker 2+ times, it's repeating
-                                                        if *count > 1 {
-                                                            return Err(format!("Section repetition detected: '{}' appeared {} times", marker, count));
-                                                        }
-                                                    }
-                                                }
-                                                
-                                                // 3. FAST: Check for cyclic patterns in recent chunks
-                                                if recent_chunks.len() >= 6 {
-                                                    let chunks_vec: Vec<&String> = recent_chunks.iter().collect();
-                                                    // Check if chunks 0,1,2 == chunks 3,4,5 (pattern repeating)
-                                                    if chunks_vec.len() >= 6 &&
-                                                       chunks_vec[0] == chunks_vec[3] &&
-                                                       chunks_vec[1] == chunks_vec[4] &&
-                                                       chunks_vec[2] == chunks_vec[5] {
-                                                        return Err("Cyclic pattern detected in recent chunks".to_string());
-                                                    }
-                                                }
-                                            }
-                                            
-                                            // 4. MEDIUM: Early accumulated text patterns (much lower threshold)
-                                            if accumulated_text.len() > 150 {  // Much earlier detection
-                                                // Check for common repetitive patterns
-                                                let ollama_count = accumulated_text.matches("ollama").count();
-                                                let file_count = accumulated_text.matches(".rs").count();
-                                                
-                                                if ollama_count > 8 || file_count > 10 {
-                                                    return Err(format!("Repetitive file pattern detected (ollama: {}, .rs: {})", ollama_count, file_count));
-                                                }
-                                                
-                                                // Look for repeated phrases
-                                                let summary_count = accumulated_text.matches("Summary").count();
-                                                let observations_count = accumulated_text.matches("Observations").count();
-                                                
-                                                if summary_count > 1 || observations_count > 1 {
-                                                    return Err(format!("Section headers repeating (Summary: {}, Observations: {})", summary_count, observations_count));
-                                                }
-                                            }
-                                            
-                                            // Emit chunk
-                                            let _ = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
-                                                "type": "chunk",
-                                                "text": response_chunk.response,
-                                                "done": false
-                                            }));
-                                        }
-                                        Err(e) => {
-                                            eprintln!("JSON parse error: {}", e);
-                                            continue;
-                                        }
-                                    }
                                 }
                             }
-                            Err(e) => {
-                                return Err(format!("Network stream error: {}", e));
+                        }
+                        Err(e) => {
+                            let error_msg = format!("Stream error: {}", e);
+                            eprintln!("{}", error_msg);
+
+                            if let Err(emit_err) = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
+                                "type": "error",
+                                "error": error_msg
+                            })) {
+                                eprintln!("Failed to emit error event: {}", emit_err);
                             }
+
+                            return Err(error_msg);
                         }
                     }
-                    
-                    Ok(())
-                } else {
-                    let status = response.status();
-                    let error_text = response.text().await.unwrap_or_else(|_| "Unknown HTTP error".to_string());
-                    Err(format!("HTTP {}: {}", status, error_text))
                 }
+
+                // Emit completion event
+                if let Err(e) = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
+                    "type": "complete"
+                })) {
+                    eprintln!("Failed to emit complete event: {}", e);
+                }
+
+                Ok(())
+            } else {
+                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                let error_msg = format!("Generation failed: {}", error_text);
+
+                if let Err(e) = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
+                    "type": "error",
+                    "error": error_msg
+                })) {
+                    eprintln!("Failed to emit error event: {}", e);
+                }
+
+                Err(error_msg)
             }
-            Err(e) => {
-                Err(format!("Failed to connect to Ollama: {}", e))
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to connect to Ollama: {}", e);
+
+            if let Err(emit_err) = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
+                "type": "error",
+                "error": error_msg
+            })) {
+                eprintln!("Failed to emit error event: {}", emit_err);
             }
-        }
-    }).await;
-    
-    // Handle results with cleanup
-    match stream_result {
-        Ok(Ok(())) => {
-            let _ = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
-                "type": "complete"
-            }));
-            Ok(())
-        }
-        Ok(Err(stream_error)) => {
-            emit_error_and_cleanup(&app_handle, &session_id, &stream_error);
-            Err(stream_error)
-        }
-        Err(_) => {
-            let timeout_msg = "Vision model timed out";
-            emit_error_and_cleanup(&app_handle, &session_id, timeout_msg);
-            Err(timeout_msg.to_string())
+
+            Err(error_msg)
         }
     }
 }
