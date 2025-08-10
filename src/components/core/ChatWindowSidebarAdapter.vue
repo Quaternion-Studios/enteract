@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { QueueListIcon, XMarkIcon, PlusIcon, TrashIcon } from '@heroicons/vue/24/outline'
+import { QueueListIcon } from '@heroicons/vue/24/outline'
 import GenericSidebar from './GenericSidebar.vue'
 import { transformChats } from '../../utils/sidebarTransformers'
 import { useChatManagement } from '../../composables/useChatManagement'

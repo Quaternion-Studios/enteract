@@ -6,7 +6,6 @@ import {
   XMarkIcon,
   QueueListIcon,
   PencilIcon,
-  SparklesIcon,
   RocketLaunchIcon
 } from '@heroicons/vue/24/outline'
 import { useSpeechTranscription } from '../../composables/useSpeechTranscription'
@@ -19,7 +18,6 @@ import { invoke } from '@tauri-apps/api/core'
 // Components
 import MessageList from '../conversational/MessageList.vue'
 import ConversationSidebarAdapter from '../conversational/ConversationSidebarAdapter.vue'
-import AIAssistant from '../conversational/AIAssistant.vue'
 import LiveAI from '../conversational/LiveAI.vue'
 import ExportControls from '../conversational/ExportControls.vue'
 import MessageSaveIndicator from '../MessageSaveIndicator.vue'
@@ -64,7 +62,6 @@ const showExportControls = ref(false)
 
 // Sidebar and panel states
 const showConversationSidebar = ref(false)
-const showAIAssistant = ref(false)
 const showLiveAI = ref(false)
 
 // Speech transcription
@@ -117,9 +114,11 @@ const {
   suggestions: liveAISuggestions,
   isProcessing: liveAIIsProcessing,
   error: liveAIError,
+  currentTempo: liveAITempo,
   startLiveAI,
   stopLiveAI,
-  onConversationChange
+  onConversationChange,
+  updateSystemPrompt
 } = useLiveAI()
 
 // Computed
@@ -408,21 +407,14 @@ const handleDeleteConversation = async (id: string) => {
   await deleteConversation(id)
 }
 
-// AI Assistant actions
-const toggleAIAssistant = () => {
-  if (showAIAssistant.value) {
-    // If already open, just close it
-    showAIAssistant.value = false
-  } else {
-    // Close other drawers first, then open AI Assistant
-    showLiveAI.value = false
-    showAIAssistant.value = true
-  }
-}
 
 const handleAIQuery = async (query: string) => {
   const currentMessages = conversationStore.currentMessages || []
   await queryAI(query, currentMessages)
+}
+
+const handleSystemPromptUpdate = (prompt: string) => {
+  updateSystemPrompt(prompt)
 }
 
 // Live AI actions
@@ -432,7 +424,6 @@ const toggleLiveAI = () => {
     showLiveAI.value = false
   } else {
     // Close other drawers first, then open Live AI
-    showAIAssistant.value = false
     showLiveAI.value = true
   }
 }
@@ -502,14 +493,6 @@ const formatSessionDuration = () => {
                 <QueueListIcon class="w-3 h-3" />
               </button>
               <button 
-                @click="toggleAIAssistant" 
-                class="ai-assistant-btn"
-                :class="{ 'active': showAIAssistant }"
-                title="AI Assistant"
-              >
-                <SparklesIcon class="w-3 h-3" />
-              </button>
-              <button 
                 @click="toggleLiveAI" 
                 class="live-ai-btn"
                 :class="{ 'active': showLiveAI }"
@@ -546,7 +529,7 @@ const formatSessionDuration = () => {
         />
         
         <!-- Main Content Area -->
-        <div class="main-content" :class="{ 'with-sidebar': showConversationSidebar }">
+        <div class="main-content" :class="{ 'with-sidebar': showConversationSidebar, 'with-right-panel': showLiveAI }">
           <!-- Export Controls -->
           <ExportControls
             :show="showExportControls"
@@ -619,16 +602,6 @@ const formatSessionDuration = () => {
           </div>
         </div>
         
-        <!-- AI Assistant Drawer -->
-        <AIAssistant
-          :show="showAIAssistant"
-          :processing="aiIsProcessing"
-          :response="aiResponse"
-          :error="aiError"
-          :message-count="messages.length"
-          @close="showAIAssistant = false"
-          @query="handleAIQuery"
-        />
         
         <!-- Live AI Drawer -->
         <LiveAI
@@ -638,8 +611,16 @@ const formatSessionDuration = () => {
           :response="liveAIResponse"
           :suggestions="liveAISuggestions"
           :error="liveAIError"
+          :conversation-tempo="liveAITempo"
+          :ai-processing="aiIsProcessing"
+          :ai-response="aiResponse"
+          :ai-error="aiError"
+          :message-count="messages.length"
+          :full-screen="isLiveAIActive"
           @close="showLiveAI = false"
           @toggle-live="toggleLiveAIActive"
+          @ai-query="handleAIQuery"
+          @update-system-prompt="handleSystemPromptUpdate"
         />
       </div>
     </div>
@@ -706,7 +687,9 @@ const formatSessionDuration = () => {
 }
 
 .window-content {
-  @apply flex-1 flex flex-col min-h-0;
+  @apply flex-1 flex min-h-0;
+  flex-direction: row; /* Always use row layout for right-side panel */
+  position: relative; /* Allow fullscreen overlays within content area */
 }
 
 .conversational-window:has(.conversation-sidebar) .window-content,
@@ -717,6 +700,10 @@ const formatSessionDuration = () => {
 
 .main-content {
   @apply flex-1 flex flex-col min-h-0;
+}
+
+.main-content.with-right-panel {
+  margin-right: 0; /* No margin needed since we're using flexbox */
 }
 
 .window-header {

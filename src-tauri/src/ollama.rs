@@ -3,12 +3,12 @@ use serde_json;
 use reqwest;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+// use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use futures_util::StreamExt;
 use lazy_static::lazy_static;
 use tokio::sync::Semaphore;
-use tokio::time::timeout; 
+// use tokio::time::timeout; 
 use std::sync::Mutex;
 use crate::system_prompts::{
     ENTERACT_AGENT_PROMPT, 
@@ -21,15 +21,16 @@ use crate::system_prompts::{
 lazy_static! {
     static ref HTTP_CLIENT: Arc<reqwest::Client> = Arc::new(
         reqwest::Client::builder()
-            .pool_max_idle_per_host(8)  // Maintain connection pool per host
-            .pool_idle_timeout(std::time::Duration::from_secs(30))
-            .timeout(std::time::Duration::from_secs(120))  // 2 minute timeout for large models
+            .pool_max_idle_per_host(16)  // More idle connections for faster reuse
+            .pool_idle_timeout(std::time::Duration::from_secs(60))
+            .tcp_keepalive(Some(std::time::Duration::from_secs(60)))
+            .timeout(std::time::Duration::from_secs(60))  // Shorter timeout to fail fast
             .build()
             .expect("Failed to create HTTP client")
     );
     
     // Semaphore to limit concurrent AI model requests (memory safety)
-    static ref REQUEST_SEMAPHORE: Arc<Semaphore> = Arc::new(Semaphore::new(3)); // Max 3 concurrent requests
+    static ref REQUEST_SEMAPHORE: Arc<Semaphore> = Arc::new(Semaphore::new(4)); // Slightly higher concurrency
     
     // Track active streaming sessions for cancellation
     static ref ACTIVE_SESSIONS: Mutex<HashMap<String, bool>> = Mutex::new(HashMap::new());
@@ -86,6 +87,7 @@ pub struct GenerateRequest {
     pub context: Option<Vec<i32>>,
     pub images: Option<Vec<String>>,
     pub system: Option<String>,
+    pub options: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -171,11 +173,20 @@ async fn stream_ollama_response(
     }
 
     let client = Arc::clone(&HTTP_CLIENT);
+    // Send with shorter connect timeout by spawning and imposing a small timeout for first bytes
     match client.post(&url).json(&request).send().await {
         Ok(response) => {
             if response.status().is_success() {
                 let mut stream = response.bytes_stream();
                 let mut buffer = Vec::new();
+                // Emit a tiny nudge to UI so it can render quickly even before first chunk
+                if let Err(e) = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
+                    "type": "chunk",
+                    "text": "",
+                    "done": false
+                })) {
+                    eprintln!("Failed to emit priming chunk: {}", e);
+                }
 
                 while let Some(chunk_result) = stream.next().await {
                     match chunk_result {
@@ -208,6 +219,10 @@ async fn stream_ollama_response(
 
                                 match serde_json::from_str::<GenerateResponse>(&line_str) {
                                     Ok(response_chunk) => {
+                                        // Skip empty chunks to reduce UI overhead
+                                        if response_chunk.response.is_empty() {
+                                            continue;
+                                        }
                                         if let Err(e) = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
                                             "type": "chunk",
                                             "text": response_chunk.response,
@@ -392,6 +407,7 @@ pub async fn generate_ollama_response(model: String, prompt: String) -> Result<S
         context: None,
         images: None,
         system: None,
+        options: None,
     };
     
     match client.post(&url).json(&request).send().await {
@@ -427,6 +443,7 @@ pub async fn generate_ollama_response_stream(
         context: None,
         images: None,
         system: None,
+        options: None,
     };
     
     println!("🚀 Starting streaming generation for session: {}", session_id);
@@ -607,14 +624,35 @@ pub async fn generate_conversational_ai(
     app_handle: AppHandle,
     conversation_context: String,
     session_id: String,
+    custom_system_prompt: Option<String>,
 ) -> Result<(), String> {
-    let model = "gemma3:1b-it-qat".to_string(); // Using same model as enteract agent for consistency
+    // Fast 1B model for instant responses (quantized)
+    let model = "gemma3:1b-it-qat".to_string();
     
-    // Format the prompt to include the conversation context for live analysis
-    let full_prompt = format!("LIVE CONVERSATION CONTEXT:\n{}\n\nAnalyze this ongoing conversation and suggest a thoughtful response or contribution that would add value to the discussion. Provide 1-2 concise response options that match the conversation's tone and advance the dialogue.", conversation_context);
+    // Simple, direct prompt for speed
+    let full_prompt = format!("Last 3 messages (short):\n{}\n\nGive 2-3 ultra-brief options only.", conversation_context);
+    
+    // Use custom system prompt if provided, otherwise fall back to default
+    let has_custom = custom_system_prompt
+        .as_ref()
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .is_some();
+
+    let system_prompt = custom_system_prompt
+        .as_ref()
+        .and_then(|p| {
+            let t = p.trim();
+            if t.is_empty() { None } else { Some(t.to_string()) }
+        })
+        .unwrap_or_else(|| CONVERSATIONAL_AI_PROMPT.to_string());
     
     println!("💬 CONVERSATIONAL AI: Using model {} for live response assistance, session {}", model, session_id);
-    generate_agent_response_stream(app_handle, model, full_prompt, CONVERSATIONAL_AI_PROMPT.to_string(), None, session_id, "conversational_ai".to_string()).await
+    if has_custom {
+        println!("🔧 Using custom system prompt: {}...", system_prompt.chars().take(100).collect::<String>());
+    }
+    
+    generate_agent_response_stream(app_handle, model, full_prompt, system_prompt, None, session_id, "conversational_ai".to_string()).await
 }
 
 
@@ -638,6 +676,30 @@ async fn generate_agent_response_stream(
     // Build full prompt with context
     let full_prompt = build_prompt_with_context(prompt, context);
     
+    let options = if agent_type == "conversational_ai" {
+        // Keep live suggestions extremely fast and short
+        Some(serde_json::json!({
+            "num_predict": 64,
+            "temperature": 0.6,
+            "top_p": 0.9,
+            "repeat_penalty": 1.05
+        }))
+    } else if agent_type == "coding" {
+        Some(serde_json::json!({
+            "num_predict": 512,
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "repeat_penalty": 1.1
+        }))
+    } else {
+        Some(serde_json::json!({
+            "num_predict": 256,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "repeat_penalty": 1.1
+        }))
+    };
+
     let request = GenerateRequest {
         model: model.clone(),
         prompt: full_prompt,
@@ -645,6 +707,7 @@ async fn generate_agent_response_stream(
         context: None,
         images: None,
         system: Some(system_prompt),
+        options,
     };
     
     println!("🤖 Starting {} agent ({}) streaming for session: {}", agent_type, model, session_id);
@@ -694,6 +757,11 @@ async fn generate_agent_response_stream_with_image(
         context: None,
         images: Some(vec![image_base64]),
         system: Some(system_prompt),
+        options: Some(serde_json::json!({
+            "num_predict": 256,
+            "temperature": 0.5,
+            "top_p": 0.9
+        })),
     };
     
     println!("👁️ Starting {} vision analysis ({}) for session: {}", agent_type, model, session_id);
