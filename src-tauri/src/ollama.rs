@@ -17,6 +17,7 @@ use crate::system_prompts::{
     CONVERSATIONAL_AI_PROMPT,
     CODING_AGENT_PROMPT
 };
+use crate::system_info::get_gpu_info;
 // Shared HTTP client for better connection pooling and memory efficiency
 lazy_static! {
     static ref HTTP_CLIENT: Arc<reqwest::Client> = Arc::new(
@@ -136,6 +137,94 @@ fn build_prompt_with_context(current_prompt: String, context: Option<Vec<ChatCon
             current_prompt
         }
     }
+}
+
+// Detect GPU and determine optimal layer count for GPU acceleration
+fn detect_gpu_layers() -> i32 {
+    // Try to get GPU info
+    match get_gpu_info() {
+        Ok(gpus) => {
+            for gpu in gpus {
+                // Check for NVIDIA GPUs (best Ollama support)
+                if gpu.vendor == "NVIDIA" {
+                    if let Some(memory_mb) = gpu.memory_mb {
+                        println!("🎮 Detected NVIDIA GPU: {} with {}MB VRAM", gpu.name, memory_mb);
+                        
+                        // Calculate layers based on VRAM
+                        // Conservative estimates to prevent OOM
+                        let layers = if memory_mb >= 24000 {
+                            99  // Full GPU offload for 24GB+ cards (RTX 4090, A5000)
+                        } else if memory_mb >= 16000 {
+                            80  // RTX 4080, A4000
+                        } else if memory_mb >= 12000 {
+                            60  // RTX 4070 Ti, RTX 3080 Ti
+                        } else if memory_mb >= 10000 {
+                            50  // RTX 3080, RTX 4070
+                        } else if memory_mb >= 8000 {
+                            40  // RTX 3070, RTX 4060 Ti
+                        } else if memory_mb >= 6000 {
+                            30  // RTX 3060, RTX 4060
+                        } else if memory_mb >= 4000 {
+                            20  // GTX 1650, older cards
+                        } else {
+                            0   // Too little VRAM, use CPU
+                        };
+                        
+                        println!("🚀 GPU acceleration enabled with {} layers", layers);
+                        return layers;
+                    }
+                }
+                
+                // AMD GPUs (experimental Ollama support)
+                if gpu.vendor == "AMD" && gpu.name.contains("Radeon") {
+                    if let Some(memory_mb) = gpu.memory_mb {
+                        println!("🎮 Detected AMD GPU: {} with {}MB VRAM", gpu.name, memory_mb);
+                        
+                        // Conservative for AMD due to less mature support
+                        let layers = if memory_mb >= 16000 {
+                            40
+                        } else if memory_mb >= 8000 {
+                            20
+                        } else {
+                            0
+                        };
+                        
+                        if layers > 0 {
+                            println!("⚠️ AMD GPU support is experimental, using {} layers", layers);
+                        }
+                        return layers;
+                    }
+                }
+            }
+            
+            println!("⚠️ No supported GPU found for acceleration, using CPU");
+            0
+        }
+        Err(e) => {
+            println!("⚠️ Could not detect GPU: {}, using CPU", e);
+            0
+        }
+    }
+}
+
+// Get GPU acceleration status
+#[tauri::command]
+pub fn get_gpu_acceleration_status() -> serde_json::Value {
+    let gpu_layers = detect_gpu_layers();
+    let gpus = get_gpu_info().unwrap_or_else(|_| vec![]);
+    
+    serde_json::json!({
+        "enabled": gpu_layers > 0,
+        "layers": gpu_layers,
+        "gpus": gpus.iter().map(|gpu| {
+            serde_json::json!({
+                "name": gpu.name,
+                "vendor": gpu.vendor,
+                "memory_mb": gpu.memory_mb,
+                "driver_version": gpu.driver_version
+            })
+        }).collect::<Vec<_>>()
+    })
 }
 
 // Cancel a streaming session
@@ -400,6 +489,17 @@ pub async fn generate_ollama_response(model: String, prompt: String) -> Result<S
     let client = Arc::clone(&HTTP_CLIENT);
     let url = format!("{}/api/generate", OLLAMA_BASE_URL);
     
+    // Detect GPU and set acceleration options
+    let gpu_layers = detect_gpu_layers();
+    let options = if gpu_layers > 0 {
+        Some(serde_json::json!({
+            "num_gpu": gpu_layers,
+            "num_thread": 4
+        }))
+    } else {
+        None
+    };
+    
     let request = GenerateRequest {
         model,
         prompt,
@@ -407,7 +507,7 @@ pub async fn generate_ollama_response(model: String, prompt: String) -> Result<S
         context: None,
         images: None,
         system: None,
-        options: None,
+        options,
     };
     
     match client.post(&url).json(&request).send().await {
@@ -436,6 +536,17 @@ pub async fn generate_ollama_response_stream(
     let client = Arc::clone(&HTTP_CLIENT);
     let url = format!("{}/api/generate", OLLAMA_BASE_URL);
     
+    // Detect GPU and set acceleration options
+    let gpu_layers = detect_gpu_layers();
+    let options = if gpu_layers > 0 {
+        Some(serde_json::json!({
+            "num_gpu": gpu_layers,
+            "num_thread": 4
+        }))
+    } else {
+        None
+    };
+    
     let request = GenerateRequest {
         model: model.clone(),
         prompt: prompt.clone(),
@@ -443,7 +554,7 @@ pub async fn generate_ollama_response_stream(
         context: None,
         images: None,
         system: None,
-        options: None,
+        options,
     };
     
     println!("🚀 Starting streaming generation for session: {}", session_id);
@@ -676,28 +787,46 @@ async fn generate_agent_response_stream(
     // Build full prompt with context
     let full_prompt = build_prompt_with_context(prompt, context);
     
+    // Detect GPU and set acceleration options
+    let gpu_layers = detect_gpu_layers();
+    
     let options = if agent_type == "conversational_ai" {
         // Keep live suggestions extremely fast and short
-        Some(serde_json::json!({
+        let mut opts = serde_json::json!({
             "num_predict": 64,
             "temperature": 0.6,
             "top_p": 0.9,
             "repeat_penalty": 1.05
-        }))
+        });
+        if gpu_layers > 0 {
+            opts["num_gpu"] = serde_json::json!(gpu_layers);
+            opts["num_thread"] = serde_json::json!(4); // Reduce CPU threads when using GPU
+        }
+        Some(opts)
     } else if agent_type == "coding" {
-        Some(serde_json::json!({
+        let mut opts = serde_json::json!({
             "num_predict": 512,
             "temperature": 0.2,
             "top_p": 0.9,
             "repeat_penalty": 1.1
-        }))
+        });
+        if gpu_layers > 0 {
+            opts["num_gpu"] = serde_json::json!(gpu_layers);
+            opts["num_thread"] = serde_json::json!(4);
+        }
+        Some(opts)
     } else {
-        Some(serde_json::json!({
+        let mut opts = serde_json::json!({
             "num_predict": 256,
             "temperature": 0.7,
             "top_p": 0.9,
             "repeat_penalty": 1.1
-        }))
+        });
+        if gpu_layers > 0 {
+            opts["num_gpu"] = serde_json::json!(gpu_layers);
+            opts["num_thread"] = serde_json::json!(4);
+        }
+        Some(opts)
     };
 
     let request = GenerateRequest {
@@ -757,11 +886,19 @@ async fn generate_agent_response_stream_with_image(
         context: None,
         images: Some(vec![image_base64]),
         system: Some(system_prompt),
-        options: Some(serde_json::json!({
-            "num_predict": 256,
-            "temperature": 0.5,
-            "top_p": 0.9
-        })),
+        options: {
+            let gpu_layers = detect_gpu_layers();
+            let mut opts = serde_json::json!({
+                "num_predict": 256,
+                "temperature": 0.5,
+                "top_p": 0.9
+            });
+            if gpu_layers > 0 {
+                opts["num_gpu"] = serde_json::json!(gpu_layers);
+                opts["num_thread"] = serde_json::json!(4);
+            }
+            Some(opts)
+        },
     };
     
     println!("👁️ Starting {} vision analysis ({}) for session: {}", agent_type, model, session_id);

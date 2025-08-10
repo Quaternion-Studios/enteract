@@ -23,7 +23,6 @@ export interface SuggestionItem {
   text: string
   timestamp: number
   contextLength: number
-  responseType?: string
   priority?: 'immediate' | 'soon' | 'normal' | 'low'
   confidence?: number
 }
@@ -54,7 +53,7 @@ export function useLiveAI() {
   
   // Response generation
   const {
-    generateMultipleResponseTypes,
+    generateContextualResponses,
     generateQuickResponse,
     adaptResponseToTempo
   } = useResponseGenerator()
@@ -82,31 +81,8 @@ export function useLiveAI() {
           console.log('🚀 Live AI streaming started')
           isProcessing.value = true
           response.value = ''
-          // Ensure at least two immediate, readable suggestions are visible while streaming begins
-          if (suggestions.value.length < 2) {
-            const standby: SuggestionItem[] = [
-              {
-                id: `standby-ack-${Date.now()}`,
-                text: 'I understand',
-                timestamp: Date.now(),
-                contextLength: messages.length,
-                priority: 'immediate',
-                responseType: 'quick-acknowledgment',
-                confidence: 0.6
-              },
-              {
-                id: `standby-q-${Date.now()}`,
-                text: 'Could you clarify that a bit?',
-                timestamp: Date.now(),
-                contextLength: messages.length,
-                priority: 'immediate',
-                responseType: 'question',
-                confidence: 0.6
-              }
-            ]
-            // Prepend without duplicating if similar ones already present
-            suggestions.value = [...standby, ...suggestions.value]
-          }
+          // Clear old suggestions when starting fresh analysis
+          suggestions.value = []
         } else if (data.type === 'chunk') {
           response.value += data.text
         } else if (data.type === 'complete') {
@@ -121,7 +97,7 @@ export function useLiveAI() {
               timestamp: Date.now(),
               contextLength: 0, // Will be set by caller
               priority: getResponsePriority(),
-              responseType: suggestedResponseTypes.value[0] || 'contextual'
+              confidence: 0.8
             }
             suggestions.value.unshift(suggestion) // Add to beginning of list
             
@@ -151,26 +127,7 @@ export function useLiveAI() {
           timestamp: Date.now(),
           contextLength: 0
         }
-        // Also provide two immediate default options
-        const standbyA: SuggestionItem = {
-          id: `standby-ack-${Date.now()}`,
-          text: 'That makes sense',
-          timestamp: Date.now(),
-          contextLength: 0,
-          priority: 'immediate',
-          responseType: 'quick-acknowledgment',
-          confidence: 0.6
-        }
-        const standbyQ: SuggestionItem = {
-          id: `standby-q-${Date.now()}`,
-          text: 'What would you like me to focus on?',
-          timestamp: Date.now(),
-          contextLength: 0,
-          priority: 'immediate',
-          responseType: 'question',
-          confidence: 0.6
-        }
-        suggestions.value = [standbyA, standbyQ, welcomeSuggestion]
+        suggestions.value = [welcomeSuggestion]
       }
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to start Live AI'
@@ -285,24 +242,22 @@ export function useLiveAI() {
           }
         })
         
-        // Generate typed responses based on conversation type
+        // Generate contextual responses based on actual conversation
         if (!isPreemptive) {
-          const typedResponses = await generateMultipleResponseTypes(
+          const contextualResponses = await generateContextualResponses(
             conversationContext,
-            suggestedResponseTypes.value.slice(0, 3),
             tempo
           )
           
-          // Add typed responses as suggestions
-          for (const typedResponse of typedResponses) {
+          // Add contextual responses as suggestions
+          for (const response of contextualResponses) {
             const suggestion: SuggestionItem = {
-              id: `typed-${Date.now()}-${Math.random()}`,
-              text: typedResponse.text,
+              id: `context-${Date.now()}-${Math.random()}`,
+              text: response.text,
               timestamp: Date.now(),
               contextLength: messages.length,
               priority: getResponsePriority(),
-              responseType: typedResponse.type,
-              confidence: typedResponse.confidence
+              confidence: response.confidence
             }
             suggestions.value.push(suggestion)
           }

@@ -1,177 +1,69 @@
 import { ref } from 'vue'
-import { MarkdownRenderer } from './markdownRenderer'
-// Vite raw import for markdown templates (no Tauri fs needed)
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore - Vite will inline this as a string
-import templatesRaw from '../resources/live-ai-templates.md?raw'
 import { invoke } from '@tauri-apps/api/core'
-
-export interface ResponseTemplate {
-  type: string
-  templates: string[]
-  contextRequired: boolean
-  minConfidence: number
-}
+import { MarkdownRenderer } from './markdownRenderer'
 
 export interface GeneratedResponse {
   text: string
-  type: string
   confidence: number
   contextRelevance: number
   tempoMatch: number
 }
 
-const responseTemplates: ResponseTemplate[] = [
-  {
-    type: 'quick-acknowledgment',
-    templates: [
-      "I understand",
-      "Got it",
-      "That makes sense",
-      "I see what you mean",
-      "Absolutely"
-    ],
-    contextRequired: false,
-    minConfidence: 0.3
-  },
-  {
-    type: 'clarification',
-    templates: [
-      "Could you elaborate on {topic}?",
-      "What do you mean by {point}?",
-      "Can you explain {concept} further?",
-      "I'd like to understand more about {subject}"
-    ],
-    contextRequired: true,
-    minConfidence: 0.5
-  },
-  {
-    type: 'technical-insight',
-    templates: [
-      "Based on the {technology}, we should consider {approach}",
-      "The {component} could be optimized by {method}",
-      "Have you considered using {solution} for this?",
-      "This reminds me of {pattern} pattern"
-    ],
-    contextRequired: true,
-    minConfidence: 0.7
-  },
-  {
-    type: 'empathy',
-    templates: [
-      "I understand that can be frustrating",
-      "That sounds challenging",
-      "I appreciate your patience with this",
-      "Let's work through this together"
-    ],
-    contextRequired: false,
-    minConfidence: 0.4
-  },
-  {
-    type: 'solution',
-    templates: [
-      "Here's what we can try: {steps}",
-      "One approach would be to {action}",
-      "Let me suggest {solution}",
-      "We could resolve this by {method}"
-    ],
-    contextRequired: true,
-    minConfidence: 0.6
-  },
-  {
-    type: 'follow-up',
-    templates: [
-      "How did that work out?",
-      "Did that solve the issue?",
-      "Is there anything else about {topic} you'd like to discuss?",
-      "What are your thoughts on {subject}?"
-    ],
-    contextRequired: true,
-    minConfidence: 0.5
-  },
-  {
-    type: 'engagement-question',
-    templates: [
-      "What's your experience with {topic}?",
-      "How do you typically handle {situation}?",
-      "What are your priorities for {subject}?",
-      "What would be your ideal outcome?"
-    ],
-    contextRequired: true,
-    minConfidence: 0.5
-  },
-  {
-    type: 'summary',
-    templates: [
-      "So to summarize: {points}",
-      "The key points are: {summary}",
-      "Let me make sure I understand: {recap}",
-      "In essence, {conclusion}"
-    ],
-    contextRequired: true,
-    minConfidence: 0.6
-  }
-]
+// Context-driven response generation - no predefined templates
+const detectQuestionInContext = (context: string): boolean => {
+  const questionIndicators = ['?', 'what ', 'how ', 'why ', 'when ', 'where ', 'who ', 'which ', 'could you', 'can you', 'would you', 'will you', 'do you']
+  const lowerContext = context.toLowerCase()
+  return questionIndicators.some(indicator => lowerContext.includes(indicator))
+}
+
+const detectSentiment = (context: string): 'positive' | 'negative' | 'neutral' => {
+  const negativeIndicators = ['problem', 'issue', 'error', 'fail', 'wrong', 'broken', 'frustrated', 'difficult', 'hard', 'confused', 'stuck']
+  const positiveIndicators = ['great', 'good', 'excellent', 'perfect', 'works', 'solved', 'happy', 'thanks', 'appreciate']
+  
+  const lowerContext = context.toLowerCase()
+  const hasNegative = negativeIndicators.some(word => lowerContext.includes(word))
+  const hasPositive = positiveIndicators.some(word => lowerContext.includes(word))
+  
+  if (hasNegative && !hasPositive) return 'negative'
+  if (hasPositive && !hasNegative) return 'positive'
+  return 'neutral'
+}
 
 export function useResponseGenerator() {
   const isGenerating = ref(false)
   const lastGeneratedResponses = ref<GeneratedResponse[]>([])
-  const templateMarkdown = ref<string>('')
-  const parsedBuckets = ref<Record<string, string[]>>({})
 
-  // Lazy load markdown templates from resources
-  const ensureTemplatesLoaded = async () => {
-    if (templateMarkdown.value) return
-    try {
-      templateMarkdown.value = (templatesRaw || '').trim()
-      parsedBuckets.value = parseTemplateMarkdown(templateMarkdown.value)
-    } catch (e) {
-      console.warn('Live AI templates not found, falling back to defaults', e)
-      templateMarkdown.value = ''
-      parsedBuckets.value = {}
-    }
-  }
-
-  const parseTemplateMarkdown = (md: string): Record<string, string[]> => {
-    const buckets: Record<string, string[]> = {}
-    const sections = md.split(/\n\n+/)
-    let currentType: string | null = null
-    for (const block of sections) {
-      const trimmed = block.trim()
-      if (!trimmed) continue
-      if (/^(engagement-question|contextual)$/i.test(trimmed)) {
-        currentType = trimmed.toLowerCase()
-        if (!buckets[currentType]) buckets[currentType] = []
-        continue
-      }
-      // If no currentType yet, infer from keywords
-      if (!currentType) {
-        currentType = trimmed.toLowerCase().includes('acknowledge:') ? 'contextual' : 'engagement-question'
-        if (!buckets[currentType]) buckets[currentType] = []
-      }
-      buckets[currentType].push(trimmed)
-    }
-    return buckets
-  }
-
-  const generateMultipleResponseTypes = async (
+  const generateContextualResponses = async (
     context: string,
-    responseTypes: string[],
     tempo: any
   ): Promise<GeneratedResponse[]> => {
     const responses: GeneratedResponse[] = []
+    const hasQuestion = detectQuestionInContext(context)
+    const sentiment = detectSentiment(context)
     
-    for (const type of responseTypes) {
-      const response = await generateResponseByType(context, type, tempo)
-      if (response) {
-        responses.push(response)
+    // If there's a question, prioritize answering it
+    if (hasQuestion) {
+      const answer = await generateDirectAnswer(context, tempo)
+      if (answer) {
+        responses.push(answer)
       }
     }
     
-    // Sort by confidence and tempo match
+    // Generate context-appropriate responses based on sentiment and tempo
+    if (sentiment === 'negative' && tempo.urgencyLevel === 'high') {
+      // Quick empathetic response for urgent negative situations
+      const empathyResponse = await generateEmpathyResponse(context, tempo)
+      if (empathyResponse) responses.push(empathyResponse)
+    }
+    
+    // Add a natural follow-up based on conversation flow
+    const followUp = await generateNaturalFollowUp(context, tempo)
+    if (followUp) responses.push(followUp)
+    
+    // Sort by relevance and confidence
     responses.sort((a, b) => {
-      const scoreA = (a.confidence * 0.4) + (a.tempoMatch * 0.3) + (a.contextRelevance * 0.3)
-      const scoreB = (b.confidence * 0.4) + (b.tempoMatch * 0.3) + (b.contextRelevance * 0.3)
+      const scoreA = (a.confidence * 0.5) + (a.contextRelevance * 0.5)
+      const scoreB = (b.confidence * 0.5) + (b.contextRelevance * 0.5)
       return scoreB - scoreA
     })
     
@@ -179,72 +71,107 @@ export function useResponseGenerator() {
     return responses.slice(0, 3) // Return top 3 responses
   }
 
-  const generateResponseByType = async (
+  const generateDirectAnswer = async (
     context: string,
-    type: string,
     tempo: any
   ): Promise<GeneratedResponse | null> => {
-    await ensureTemplatesLoaded()
-    const template = responseTemplates.find(t => t.type === type)
-    if (!template) return null
-    
     try {
       isGenerating.value = true
       
-      // For quick responses with low context requirement, use templates
-      if (!template.contextRequired && tempo.pace === 'rapid') {
-        const randomTemplate = template.templates[Math.floor(Math.random() * template.templates.length)]
-        return {
-          text: randomTemplate,
-          type,
-          confidence: 0.7,
-          contextRelevance: 0.5,
-          tempoMatch: 1.0
-        }
-      }
+      // Extract the most recent question from context
+      const lines = context.split('\n')
+      const lastQuestion = lines.reverse().find(line => detectQuestionInContext(line))
       
-      // Use curated markdown snippets if available for this type first
-      const bucketKey = (type === 'quick-acknowledgment') ? 'contextual' : (type.includes('engagement') ? 'engagement-question' : 'contextual')
-      const candidates = parsedBuckets.value[bucketKey] || []
-      if (candidates.length > 0) {
-        const pick = candidates[Math.floor(Math.random() * candidates.length)]
-        const rendered = MarkdownRenderer.render(pick)
-        return {
-          text: stripHtml(rendered),
-          type,
-          confidence: 0.8,
-          contextRelevance: 0.6,
-          tempoMatch: calculateTempoMatch(pick, tempo)
-        }
-      }
-
-      // For context-aware responses, use AI generation when markdown has no suitable entry
+      if (!lastQuestion) return null
+      
+      // Generate a direct, concise answer
       const enhancedContext = {
         conversation: context,
-        responseType: type,
+        question: lastQuestion,
+        instruction: 'Provide a direct, concise answer to the question. No acknowledgments or filler.',
         tempo: tempo.pace,
-        urgency: tempo.urgencyLevel,
-        conversationType: tempo.conversationType,
-        templates: template.templates
+        urgency: tempo.urgencyLevel
       }
       
-      const response = await invoke<GeneratedResponse>('generate_typed_response', {
+      const response = await invoke<any>('generate_typed_response', {
         context: enhancedContext
       })
       
-      // Calculate tempo match score
-      const tempoMatch = calculateTempoMatch(response.text, tempo)
+      const responseText = response.text || response
+      const formattedText = MarkdownRenderer.render(responseText)
       
       return {
-        ...response,
-        type,
-        tempoMatch
+        text: formattedText,
+        confidence: 0.9,
+        contextRelevance: 1.0,
+        tempoMatch: calculateTempoMatch(responseText, tempo)
       }
     } catch (error) {
-      console.error(`Failed to generate ${type} response:`, error)
+      console.error('Failed to generate direct answer:', error)
       return null
     } finally {
       isGenerating.value = false
+    }
+  }
+  
+  const generateEmpathyResponse = async (
+    context: string,
+    tempo: any
+  ): Promise<GeneratedResponse | null> => {
+    try {
+      const enhancedContext = {
+        conversation: context,
+        instruction: 'Provide a brief, empathetic response that acknowledges the difficulty without being generic.',
+        tempo: tempo.pace
+      }
+      
+      const response = await invoke<any>('generate_typed_response', {
+        context: enhancedContext
+      })
+      
+      const responseText = response.text || response
+      const formattedText = MarkdownRenderer.render(responseText)
+      
+      return {
+        text: formattedText,
+        confidence: 0.7,
+        contextRelevance: 0.8,
+        tempoMatch: calculateTempoMatch(responseText, tempo)
+      }
+    } catch (error) {
+      console.error('Failed to generate empathy response:', error)
+      return null
+    }
+  }
+  
+  const generateNaturalFollowUp = async (
+    context: string,
+    tempo: any
+  ): Promise<GeneratedResponse | null> => {
+    try {
+      const enhancedContext = {
+        conversation: context,
+        instruction: 'Suggest a natural next thing to say based on the conversation flow. Be specific and contextual.',
+        tempo: tempo.pace,
+        urgency: tempo.urgencyLevel
+      }
+      
+      const response = await invoke<any>('generate_typed_response', {
+        context: enhancedContext
+      })
+      
+      const responseText = response.text || response
+      const formattedText = MarkdownRenderer.render(responseText)
+      
+      return {
+        text: formattedText,
+        confidence: 0.8,
+        contextRelevance: 0.9,
+        tempoMatch: calculateTempoMatch(responseText, tempo)
+      }
+    } catch (error) {
+      console.error('Failed to generate follow-up:', error)
+      return null
     }
   }
 
@@ -277,20 +204,30 @@ export function useResponseGenerator() {
   }
 
   const generateQuickResponse = async (context: string): Promise<string> => {
-    // Generate a very quick, contextual response for rapid conversations
-    const quickTemplates = [
-      "Interesting point",
-      "That's helpful",
-      "Good idea",
-      "Let me think about that",
-      "Makes sense"
-    ]
+    // Generate contextual quick response based on what was actually said
+    const hasQuestion = detectQuestionInContext(context)
+    const sentiment = detectSentiment(context)
     
-    if (context.includes('?')) {
-      return "Let me check on that"
+    if (hasQuestion) {
+      // If asked a question, give a brief direct response
+      const lastLine = context.split('\n').pop() || ''
+      if (lastLine.toLowerCase().includes('how')) return "Here's how..."
+      if (lastLine.toLowerCase().includes('what')) return "It's..."
+      if (lastLine.toLowerCase().includes('why')) return "Because..."
+      if (lastLine.toLowerCase().includes('when')) return "We can schedule that..."
+      return "Let me clarify that"
     }
     
-    return quickTemplates[Math.floor(Math.random() * quickTemplates.length)]
+    if (sentiment === 'negative') {
+      return "I see the issue"
+    }
+    
+    if (sentiment === 'positive') {
+      return "Excellent"
+    }
+    
+    // Default to acknowledging what was said naturally
+    return "I understand"
   }
 
   const adaptResponseToTempo = (response: string, tempo: any): string => {
@@ -323,18 +260,10 @@ export function useResponseGenerator() {
   return {
     isGenerating,
     lastGeneratedResponses,
-    generateMultipleResponseTypes,
-    generateResponseByType,
+    generateContextualResponses,
+    generateDirectAnswer,
     generateQuickResponse,
     adaptResponseToTempo,
-    scoreResponseRelevance,
-    responseTemplates
+    scoreResponseRelevance
   }
-}
-
-// Helper to strip HTML tags from rendered markdown where we only need text
-function stripHtml(html: string): string {
-  const tmp = document.createElement('div')
-  tmp.innerHTML = html
-  return tmp.textContent || tmp.innerText || ''
 }

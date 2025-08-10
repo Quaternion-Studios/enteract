@@ -32,7 +32,8 @@ use ollama::{
     get_ollama_models, get_ollama_status, pull_ollama_model, delete_ollama_model,
     generate_ollama_response, generate_ollama_response_stream, get_ollama_model_info,
     generate_enteract_agent_response, generate_vision_analysis, generate_deep_research,
-    generate_conversational_ai, generate_coding_agent_response, cancel_ai_response
+    generate_conversational_ai, generate_coding_agent_response, cancel_ai_response,
+    get_gpu_acceleration_status
 };
 use screenshot::{capture_screenshot, capture_screenshot_area};
 use file_handler::{
@@ -127,6 +128,7 @@ pub fn run() {
             generate_conversational_ai,
             generate_coding_agent_response,
             cancel_ai_response,
+            get_gpu_acceleration_status,
             
             // Screenshot
             capture_screenshot,

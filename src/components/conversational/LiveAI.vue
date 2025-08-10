@@ -80,56 +80,28 @@ const promptTemplates = ref([
     name: 'Sales Call',
     icon: '💼',
     description: 'For sales conversations and client meetings',
-    prompt: `You are a sales conversation assistant. Help with:
-- Acknowledge customer concerns professionally
-- Ask clarifying questions about needs and budget  
-- Suggest next steps to move the sale forward
-- Handle objections with empathy
-
-Keep responses under 15 words. Focus on building rapport and closing deals.
-Format: **Acknowledge:** [response] **Question:** [response] **Action:** [response]`
+    prompt: `You are a sales conversation assistant. Provide natural, contextual responses based on the conversation flow. Focus on building rapport and closing deals. Keep responses concise and conversational.`
   },
   {
     id: 'support',
     name: 'Customer Support',
     icon: '🤝',
     description: 'For customer service and troubleshooting',
-    prompt: `You are a customer support assistant. Help with:
-- Show empathy for customer frustrations
-- Ask specific questions to diagnose issues
-- Provide clear next steps to resolve problems
-- Follow up to ensure satisfaction
-
-Keep responses under 15 words. Focus on problem-solving and customer satisfaction.
-Format: **Acknowledge:** [response] **Question:** [response] **Action:** [response]`
+    prompt: `You are a customer support assistant. Provide empathetic, helpful responses based on the customer's needs. Focus on problem-solving and customer satisfaction. Keep responses natural and concise.`
   },
   {
     id: 'technical',
     name: 'Technical Meeting',
     icon: '⚡',
     description: 'For technical discussions and problem-solving',
-    prompt: `You are a technical conversation assistant. Help with:
-- Acknowledge technical points accurately
-- Ask for clarification on specifications
-- Suggest implementation approaches
-- Identify potential issues or blockers
-
-Keep responses under 15 words. Focus on technical accuracy and problem-solving.
-Format: **Acknowledge:** [response] **Question:** [response] **Action:** [response]`
+    prompt: `You are a technical conversation assistant. Provide accurate, relevant responses based on the technical discussion. Focus on problem-solving and clarity. Keep responses concise and to the point.`
   },
   {
     id: 'general',
     name: 'General Business',
     icon: '💬',
     description: 'For general business conversations',
-    prompt: `You are a business conversation assistant. Help with:
-- Acknowledge points professionally
-- Ask relevant follow-up questions
-- Suggest appropriate next steps
-- Keep conversation productive
-
-Keep responses under 15 words. Focus on professionalism and productivity.
-Format: **Acknowledge:** [response] **Question:** [response] **Action:** [response]`
+    prompt: `You are a business conversation assistant. Provide professional, relevant responses based on the conversation context. Focus on moving the discussion forward productively. Keep responses natural and concise.`
   },
   {
     id: 'custom',
@@ -449,9 +421,8 @@ watch(() => props.show, (newValue) => {
               class="top-recommendation"
               :class="{ 'urgent': suggestion.priority === 'immediate', 'copied': copiedStates[suggestion.id] }"
             >
-              <p class="top-recommendation-text">{{ suggestion.text }}</p>
+              <div class="top-recommendation-text" v-html="suggestion.text"></div>
               <div class="top-recommendation-meta">
-                <span class="suggestion-type">{{ suggestion.responseType || 'response' }}</span>
                 <ClipboardDocumentIcon v-if="!copiedStates[suggestion.id]" class="w-3 h-3" />
                 <CheckIcon v-else class="w-3 h-3 text-green-500" />
               </div>
@@ -469,9 +440,8 @@ watch(() => props.show, (newValue) => {
               }"
             >
               <div class="suggestion-content">
-                <p class="suggestion-text">{{ suggestion.text }}</p>
+                <div class="suggestion-text" v-html="suggestion.text"></div>
                 <div class="suggestion-meta">
-                  <span class="suggestion-type">{{ suggestion.responseType || 'response' }}</span>
                   <ClipboardDocumentIcon v-if="!copiedStates[suggestion.id]" class="w-3 h-3" />
                   <CheckIcon v-else class="w-3 h-3 text-green-500" />
                 </div>
@@ -737,7 +707,7 @@ watch(() => props.show, (newValue) => {
 }
 
 .top-recommendation-meta {
-  @apply flex items-center justify-between text-xs text-white/50 mt-2;
+  @apply flex items-center justify-end text-xs text-white/50 mt-2;
 }
 
 .processing {
@@ -790,7 +760,7 @@ watch(() => props.show, (newValue) => {
 }
 
 .suggestion-meta {
-  @apply flex items-center justify-between text-xs text-white/50;
+  @apply flex items-center justify-end text-xs text-white/50;
 }
 
 .suggestion-type {
