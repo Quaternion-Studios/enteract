@@ -7,10 +7,6 @@ import {
   ClipboardDocumentIcon,
   CheckIcon,
   BoltIcon,
-  ChatBubbleLeftRightIcon,
-  QuestionMarkCircleIcon,
-  HandThumbUpIcon,
-  ArrowPathIcon,
   PhoneIcon,
   UserGroupIcon,
   ComputerDesktopIcon,
@@ -112,46 +108,10 @@ const promptTemplates = ref([
   }
 ])
 
-// 4 essential quick actions for live calls
-const quickActions = ref([
-  { 
-    icon: HandThumbUpIcon, 
-    text: "I understand", 
-    query: "What's a good acknowledgment response?",
-    color: "green"
-  },
-  { 
-    icon: QuestionMarkCircleIcon, 
-    text: "Good question", 
-    query: "What clarifying question should I ask?",
-    color: "blue"
-  },
-  { 
-    icon: ArrowPathIcon, 
-    text: "Let me check", 
-    query: "What should I do next?",
-    color: "purple"
-  },
-  { 
-    icon: ChatBubbleLeftRightIcon, 
-    text: "Tell me more", 
-    query: "How can I continue this conversation?",
-    color: "orange"
-  }
-])
 
 const handleClose = () => emit('close')
 const handleToggleLive = () => emit('toggle-live')
 
-const handleQuickAction = (action: any) => {
-  if (props.isActive) {
-    // Copy the quick text directly
-    copyToClipboard(action.text, action.text)
-  } else {
-    // If not active, send AI query
-    emit('ai-query', action.query)
-  }
-}
 
 const copyToClipboard = async (text: string, id?: string) => {
   if (!text) return
@@ -175,7 +135,7 @@ const getConversationIcon = computed(() => {
     case 'business': return PhoneIcon
     case 'support': return UserGroupIcon
     case 'technical': return ComputerDesktopIcon
-    default: return ChatBubbleLeftRightIcon
+    default: return SparklesIcon
   }
 })
 
@@ -380,26 +340,6 @@ watch(() => props.show, (newValue) => {
         </button>
       </div>
       
-      <!-- Quick Actions (4 buttons) -->
-      <div class="quick-actions-grid">
-        <button
-          v-for="action in quickActions"
-          :key="action.text"
-          @click="handleQuickAction(action)"
-          class="quick-action"
-          :class="[
-            `action-${action.color}`,
-            { 'copied': copiedStates[action.text] }
-          ]"
-        >
-          <component 
-            :is="copiedStates[action.text] ? CheckIcon : action.icon" 
-            class="w-5 h-5" 
-          />
-          <span class="action-text">{{ action.text }}</span>
-        </button>
-      </div>
-      
       <!-- Large Recommendations Area -->
       <div class="recommendations-area">
         <div v-if="processing || aiProcessing" class="processing">
@@ -409,42 +349,29 @@ watch(() => props.show, (newValue) => {
         
         <div v-else-if="suggestions && suggestions.length > 0" class="suggestions">
           <div class="suggestions-header">
-            <span class="suggestions-title">AI Suggestions</span>
-            <span class="suggestions-count">{{ suggestions.length }}</span>
+            <SparklesIcon class="w-4 h-4 text-blue-500" />
+            <span class="suggestions-title">AI Response Suggestion</span>
           </div>
-          <!-- Top 2 big, readable recommendations -->
-          <div class="top-recommendations" v-if="suggestions.slice(0, 2).length">
+          <!-- Display primary suggestion prominently -->
+          <div class="primary-suggestion">
             <div
-              v-for="suggestion in suggestions.slice(0, 2)"
-              :key="suggestion.id + '-top'"
-              @click="copyToClipboard(suggestion.text, suggestion.id)"
-              class="top-recommendation"
-              :class="{ 'urgent': suggestion.priority === 'immediate', 'copied': copiedStates[suggestion.id] }"
-            >
-              <div class="top-recommendation-text" v-html="suggestion.text"></div>
-              <div class="top-recommendation-meta">
-                <ClipboardDocumentIcon v-if="!copiedStates[suggestion.id]" class="w-3 h-3" />
-                <CheckIcon v-else class="w-3 h-3 text-green-500" />
-              </div>
-            </div>
-          </div>
-          <div class="suggestions-list">
-            <div
-              v-for="suggestion in suggestions.slice(2, 6)"
+              v-for="suggestion in suggestions"
               :key="suggestion.id"
               @click="copyToClipboard(suggestion.text, suggestion.id)"
-              class="suggestion"
+              class="suggestion-card"
               :class="{ 
                 'urgent': suggestion.priority === 'immediate',
                 'copied': copiedStates[suggestion.id]
               }"
             >
-              <div class="suggestion-content">
-                <div class="suggestion-text" v-html="suggestion.text"></div>
-                <div class="suggestion-meta">
-                  <ClipboardDocumentIcon v-if="!copiedStates[suggestion.id]" class="w-3 h-3" />
-                  <CheckIcon v-else class="w-3 h-3 text-green-500" />
-                </div>
+              <div class="suggestion-text">{{ suggestion.text }}</div>
+              <div class="suggestion-actions">
+                <span class="confidence-badge">{{ Math.round((suggestion.confidence || 0.8) * 100) }}% confidence</span>
+                <button class="copy-btn" :class="{ 'copied': copiedStates[suggestion.id] }">
+                  <ClipboardDocumentIcon v-if="!copiedStates[suggestion.id]" class="w-4 h-4" />
+                  <CheckIcon v-else class="w-4 h-4 text-green-500" />
+                  <span>{{ copiedStates[suggestion.id] ? 'Copied!' : 'Copy' }}</span>
+                </button>
               </div>
             </div>
           </div>
@@ -475,10 +402,10 @@ watch(() => props.show, (newValue) => {
             />
           </div>
           <p class="empty-title">
-            {{ isActive ? 'Listening for context...' : 'Ready to assist' }}
+            {{ isActive ? 'Analyzing conversation...' : 'AI Assistant Ready' }}
           </p>
           <p class="empty-subtitle">
-            {{ isActive ? 'AI suggestions will appear here' : 'Choose conversation type in settings' }}
+            {{ isActive ? 'Contextual responses will appear automatically' : 'Start to enable smart response suggestions' }}
           </p>
         </div>
       </div>
@@ -645,69 +572,28 @@ watch(() => props.show, (newValue) => {
   @apply border-green-500/30 hover:border-green-500/50;
 }
 
-.quick-actions-grid {
-  @apply grid grid-cols-2 gap-3;
-}
-
-.quick-action {
-  @apply flex flex-col items-center gap-2 p-4 rounded-xl;
-  @apply bg-white/[0.03] hover:bg-white/[0.06];
-  @apply border border-white/10 hover:border-white/20;
-  @apply transition-all duration-200 active:scale-95;
-}
-
-.action-green {
-  @apply hover:border-green-500/30 hover:bg-green-500/10;
-}
-
-.action-blue {
-  @apply hover:border-blue-500/30 hover:bg-blue-500/10;
-}
-
-.action-purple {
-  @apply hover:border-purple-500/30 hover:bg-purple-500/10;
-}
-
-.action-orange {
-  @apply hover:border-orange-500/30 hover:bg-orange-500/10;
-}
-
-.quick-action.copied {
-  @apply bg-green-500/20 border-green-500/50 text-green-400;
-}
-
-.action-text {
-  @apply text-sm font-medium text-white/80;
-  @apply text-center leading-tight;
-}
-
 .recommendations-area {
   @apply flex-1 flex flex-col min-h-[200px] bg-white/[0.02] rounded-xl p-3;
   @apply border border-white/10;
 }
 
-.top-recommendations {
-  @apply grid grid-cols-1 gap-3 mb-3;
+.primary-suggestion {
+  @apply space-y-3;
 }
 
-.top-recommendation {
-  @apply p-4 rounded-xl bg-white/[0.05] hover:bg-white/[0.08] border border-white/10 hover:border-white/20 cursor-pointer transition-all duration-200 active:scale-95;
+.suggestion-card {
+  @apply p-4 rounded-xl bg-white/[0.05] hover:bg-white/[0.08];
+  @apply border border-white/10 hover:border-white/20;
+  @apply cursor-pointer transition-all duration-200;
 }
 
-.top-recommendation.urgent {
+.suggestion-card.urgent {
   @apply border-orange-500/40 bg-orange-500/10;
+  animation: gentle-pulse 2s infinite;
 }
 
-.top-recommendation.copied {
+.suggestion-card.copied {
   @apply bg-green-500/20 border-green-500/40;
-}
-
-.top-recommendation-text {
-  @apply text-base text-white/90 leading-relaxed;
-}
-
-.top-recommendation-meta {
-  @apply flex items-center justify-end text-xs text-white/50 mt-2;
 }
 
 .processing {
@@ -715,56 +601,40 @@ watch(() => props.show, (newValue) => {
 }
 
 .suggestions-header {
-  @apply flex items-center justify-between mb-3 pb-2 border-b border-white/10;
+  @apply flex items-center gap-2 mb-3 pb-2 border-b border-white/10;
 }
 
 .suggestions-title {
   @apply text-sm font-semibold text-white/90;
 }
 
-.suggestions-count {
+.suggestion-text {
+  @apply text-sm text-white/90 leading-relaxed mb-3;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.suggestion-actions {
+  @apply flex items-center justify-between;
+}
+
+.confidence-badge {
   @apply text-xs text-white/50 bg-white/10 px-2 py-1 rounded-full;
 }
 
-.suggestions-list {
-  @apply flex flex-col gap-2;
+.copy-btn {
+  @apply flex items-center gap-1 px-3 py-1.5 rounded-lg;
+  @apply bg-white/10 hover:bg-white/20 text-white/70 hover:text-white/90;
+  @apply transition-all duration-200 text-xs font-medium;
 }
 
-.suggestion {
-  @apply p-3 rounded-lg bg-white/[0.03] hover:bg-white/[0.06];
-  @apply border border-white/10 hover:border-white/20;
-  @apply cursor-pointer transition-all duration-200 active:scale-95;
-}
-
-.suggestion.urgent {
-  @apply border-orange-500/40 bg-orange-500/10;
-  animation: gentle-pulse 2s infinite;
-}
-
-.suggestion.copied {
-  @apply bg-green-500/20 border-green-500/40;
+.copy-btn.copied {
+  @apply bg-green-500/20 text-green-400;
 }
 
 @keyframes gentle-pulse {
   0%, 100% { border-color: rgba(251, 146, 60, 0.4); }
   50% { border-color: rgba(251, 146, 60, 0.6); }
-}
-
-.suggestion-content {
-  @apply flex flex-col gap-2;
-}
-
-.suggestion-text {
-  @apply text-sm text-white/90 leading-relaxed;
-  font-size: 13px;
-}
-
-.suggestion-meta {
-  @apply flex items-center justify-end text-xs text-white/50;
-}
-
-.suggestion-type {
-  @apply capitalize;
 }
 
 .ai-response {
@@ -817,14 +687,6 @@ watch(() => props.show, (newValue) => {
 
 /* Responsive adjustments */
 @media (max-height: 700px) {
-  .quick-actions-grid {
-    @apply grid-cols-1 gap-2;
-  }
-  
-  .quick-action {
-    @apply flex-row justify-start px-3 py-2;
-  }
-  
   .recommendations-area {
     @apply min-h-[150px];
   }
