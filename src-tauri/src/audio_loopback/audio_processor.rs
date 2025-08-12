@@ -1,11 +1,14 @@
 // src-tauri/src/audio_loopback/audio_processor.rs
-// use crate::audio_loopback::quality_filter::{estimate_transcription_confidence, is_transcription_quality_ok};
 use anyhow::Result;
 use tauri::{AppHandle, Emitter};
 use base64::prelude::*;
 use serde_json;
 use std::fs::OpenOptions;
 use std::io::Write;
+use crate::audio_loopback::audio_diagnostics::{
+    log_audio_event, log_audio_buffer_analysis, log_transcription_attempt, 
+    log_whisper_model_info, log_error, validate_audio_format
+};
 
 // Audio processing for transcription with improved quality filtering
 #[tauri::command]
@@ -14,6 +17,22 @@ pub async fn process_audio_for_transcription(
     sample_rate: u32,
     app_handle: AppHandle
 ) -> Result<String, String> {
+    let start_time = std::time::Instant::now();
+    
+    // Validate input audio format
+    if let Err(e) = validate_audio_format(&audio_data, 16, 2) {
+        log_error("VALIDATION", &e, Some(serde_json::json!({
+            "input_bytes": audio_data.len(),
+            "sample_rate": sample_rate
+        })));
+        return Err(e);
+    }
+    
+    log_audio_event("PROCESS", "Starting transcription processing", Some(serde_json::json!({
+        "input_bytes": audio_data.len(),
+        "sample_rate": sample_rate
+    })));
+    
     // First process the audio through our pipeline to match Python's fast_audio_process
     println!("[PROCESS] Input: {} bytes, {} Hz", audio_data.len(), sample_rate);
     
@@ -26,6 +45,7 @@ pub async fn process_audio_for_transcription(
     );
     
     println!("[PROCESS] Output: {} samples at 16kHz", processed_samples.len());
+    log_audio_buffer_analysis(&processed_samples, "After processing");
     
     // Check minimum audio length (1.5 seconds at 16kHz)
     let min_samples = (16000.0 * 1.5) as usize;
@@ -78,6 +98,7 @@ pub async fn process_audio_for_transcription(
     };
     
     println!("[AUDIO_PROCESSOR] Using Whisper model: {}", model_size);
+    log_whisper_model_info(&model_size, "auto-detected", true);
     
     let config = crate::speech::WhisperModelConfig {
         modelSize: model_size,
@@ -90,6 +111,9 @@ pub async fn process_audio_for_transcription(
     match crate::speech::transcribe_audio_base64(audio_base64, config).await {
         Ok(result) => {
             let text = result.text.trim();
+            let duration_ms = start_time.elapsed().as_millis() as u64;
+            
+            log_transcription_attempt(text, result.confidence, duration_ms, true);
             log_transcription_debug(&format!("[MAIN] Raw Whisper result: '{}'", text), rms, db_level);
             
             if !text.is_empty() && text.len() > 1 {
@@ -123,6 +147,13 @@ pub async fn process_audio_for_transcription(
             Ok("".to_string())
         },
         Err(e) => {
+            let duration_ms = start_time.elapsed().as_millis() as u64;
+            log_transcription_attempt("", 0.0, duration_ms, false);
+            log_error("WHISPER", &format!("Transcription failed: {}", e), Some(serde_json::json!({
+                "duration_ms": duration_ms,
+                "audio_rms": rms,
+                "db_level": db_level
+            })));
             log_transcription_debug(&format!("[MAIN ERROR] Transcription failed: {}", e), rms, db_level);
             Err(format!("Transcription failed: {}", e))
         }

@@ -16,6 +16,8 @@ pub mod audio_processor;
 pub mod capture_engine;
 pub mod quality_filter;
 pub mod settings;
+pub mod audio_diagnostics;
+pub mod diagnostics_commands;
 
 // Re-export main types and functions
 pub use types::{CAPTURE_STATE, CaptureState, AudioLoopbackDevice, DeviceType, LoopbackMethod, AudioDeviceSettings};
@@ -23,3 +25,4 @@ pub use device_enumerator::*;
 pub use capture_engine::*;
 pub use audio_processor::*;
 pub use settings::*;
+pub use diagnostics_commands::*;

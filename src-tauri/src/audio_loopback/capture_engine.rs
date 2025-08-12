@@ -2,6 +2,10 @@
 use crate::audio_loopback::types::*;
 use crate::audio_loopback::platform::{get_audio_backend, AudioCaptureBackend};
 use crate::audio_loopback::audio_processor::calculate_audio_level;
+use crate::audio_loopback::audio_diagnostics::{
+    init_audio_logger, log_audio_event, log_audio_buffer_analysis, 
+    log_device_info, log_error, validate_audio_format, flush_logs
+};
 use anyhow::Result;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -22,14 +26,21 @@ pub async fn start_audio_loopback_capture(
     device_id: String,
     app_handle: AppHandle
 ) -> Result<String, String> {
+    // Initialize diagnostics
+    if let Err(e) = init_audio_logger() {
+        println!("Warning: Failed to initialize audio logger: {}", e);
+    }
+    
     // Check if already capturing
     {
         let state = CAPTURE_STATE.lock().unwrap();
         if state.is_capturing {
+            log_error("CAPTURE", "Already capturing", Some(serde_json::json!({"device_id": device_id})));
             return Err("Audio capture already in progress".to_string());
         }
     }
     
+    log_audio_event("CAPTURE", "Starting audio capture", Some(serde_json::json!({"device_id": device_id})));
     println!("🎤 Starting audio capture for device: {}", device_id);
     
     // Create stop channel

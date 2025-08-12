@@ -13,12 +13,16 @@ mod data_store;
 mod audio_loopback; // New audio loopback module
 mod system_prompts; // System prompts module
 mod system_info; // System information module
+mod gpu_detection; // GPU detection and acceleration status
 
 // Re-export the commands from modules
 use transparency::{set_window_transparency, emergency_restore_window, toggle_transparency};
 use window_manager::{
     move_window_to_position, get_window_position, get_window_size, get_screen_size,
-    get_virtual_desktop_size, get_monitor_layout, set_window_bounds
+    get_virtual_desktop_size, get_monitor_layout, set_window_bounds,
+    start_window_drag, update_window_drag, start_window_resize, update_window_resize,
+    get_window_state, maximize_window, unmaximize_window, minimize_window, restore_window,
+    set_window_always_on_top, enable_window_drag_region, detect_resize_zone
 };
 use eye_tracking::{
     start_ml_eye_tracking, stop_ml_eye_tracking, get_ml_gaze_data, calibrate_ml_eye_tracking,
@@ -51,9 +55,11 @@ use data_store::{
 use audio_loopback::{
     enumerate_loopback_devices, auto_select_best_device, test_audio_device,
     save_audio_settings, load_audio_settings, save_general_settings, load_general_settings,
-    start_audio_loopback_capture, stop_audio_loopback_capture, process_audio_for_transcription
+    start_audio_loopback_capture, stop_audio_loopback_capture, process_audio_for_transcription,
+    diagnose_audio_system, test_whisper_transcription, get_audio_debug_log
 };
 use system_info::get_system_info;
+use gpu_detection::detect_gpu_capabilities;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -95,6 +101,20 @@ pub fn run() {
             get_virtual_desktop_size,
             get_monitor_layout,
             set_window_bounds,
+            
+            // Enhanced window controls
+            start_window_drag,
+            update_window_drag,
+            start_window_resize,
+            update_window_resize,
+            get_window_state,
+            maximize_window,
+            unmaximize_window,
+            minimize_window,
+            restore_window,
+            set_window_always_on_top,
+            enable_window_drag_region,
+            detect_resize_zone,
             
             // Eye tracking
             start_ml_eye_tracking,
@@ -163,8 +183,14 @@ pub fn run() {
             stop_audio_loopback_capture,
             process_audio_for_transcription,
             
+            // Audio diagnostics
+            diagnose_audio_system,
+            test_whisper_transcription,
+            get_audio_debug_log,
+            
             // System info
             get_system_info,
+            detect_gpu_capabilities,
             
             // Message-level persistence
             save_conversation_message,
