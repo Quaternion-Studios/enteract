@@ -740,28 +740,13 @@ pub async fn generate_conversational_ai(
     // Fast 1B model for instant responses (quantized)
     let model = "gemma3:1b-it-qat".to_string();
     
-    // Simple, direct prompt for speed
-    let full_prompt = format!("Last 3 messages (short):\n{}\n\nGive 2-3 ultra-brief options only.", conversation_context);
+    // Simplified prompt - just provide the conversation context
+    let full_prompt = format!("Conversation:\n{}\n\nProvide a brief summary and helpful next steps.", conversation_context);
     
-    // Use custom system prompt if provided, otherwise fall back to default
-    let has_custom = custom_system_prompt
-        .as_ref()
-        .map(|p| p.trim())
-        .filter(|p| !p.is_empty())
-        .is_some();
-
-    let system_prompt = custom_system_prompt
-        .as_ref()
-        .and_then(|p| {
-            let t = p.trim();
-            if t.is_empty() { None } else { Some(t.to_string()) }
-        })
-        .unwrap_or_else(|| CONVERSATIONAL_AI_PROMPT.to_string());
+    // Always use the simplified system prompt
+    let system_prompt = CONVERSATIONAL_AI_PROMPT.to_string();
     
-    println!("💬 CONVERSATIONAL AI: Using model {} for live response assistance, session {}", model, session_id);
-    if has_custom {
-        println!("🔧 Using custom system prompt: {}...", system_prompt.chars().take(100).collect::<String>());
-    }
+    println!("💬 CONVERSATIONAL AI: Using model {} for insights, session {}", model, session_id);
     
     generate_agent_response_stream(app_handle, model, full_prompt, system_prompt, None, session_id, "conversational_ai".to_string()).await
 }

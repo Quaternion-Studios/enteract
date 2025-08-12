@@ -114,11 +114,9 @@ const {
   suggestions: liveAISuggestions,
   isProcessing: liveAIIsProcessing,
   error: liveAIError,
-  currentTempo: liveAITempo,
   startLiveAI,
   stopLiveAI,
-  onConversationChange,
-  updateSystemPrompt
+  onConversationChange
 } = useLiveAI()
 
 // Computed
@@ -413,9 +411,6 @@ const handleAIQuery = async (query: string) => {
   await queryAI(query, currentMessages)
 }
 
-const handleSystemPromptUpdate = (prompt: string) => {
-  updateSystemPrompt(prompt)
-}
 
 // Live AI actions
 const toggleLiveAI = () => {
@@ -611,7 +606,6 @@ const formatSessionDuration = () => {
           :response="liveAIResponse"
           :suggestions="liveAISuggestions"
           :error="liveAIError"
-          :conversation-tempo="liveAITempo"
           :ai-processing="aiIsProcessing"
           :ai-response="aiResponse"
           :ai-error="aiError"
@@ -620,7 +614,6 @@ const formatSessionDuration = () => {
           @close="showLiveAI = false"
           @toggle-live="toggleLiveAIActive"
           @ai-query="handleAIQuery"
-          @update-system-prompt="handleSystemPromptUpdate"
         />
       </div>
     </div>

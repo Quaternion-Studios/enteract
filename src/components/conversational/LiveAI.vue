@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { 
   XMarkIcon, 
   PlayIcon, 
@@ -7,12 +7,7 @@ import {
   ClipboardDocumentIcon,
   CheckIcon,
   BoltIcon,
-  PhoneIcon,
-  UserGroupIcon,
-  ComputerDesktopIcon,
-  SparklesIcon,
-  CogIcon,
-  DocumentTextIcon
+  SparklesIcon
 } from '@heroicons/vue/24/outline'
 
 interface SuggestionItem {
@@ -25,16 +20,8 @@ interface SuggestionItem {
   confidence?: number
 }
 
-interface ConversationTempo {
-  pace: 'slow' | 'moderate' | 'fast' | 'rapid'
-  averageMessageInterval: number
-  lastSpeaker: 'user' | 'system' | null
-  turnTakingPattern: 'alternating' | 'one-sided' | 'balanced'
-  urgencyLevel: 'low' | 'medium' | 'high'
-  conversationType: 'casual' | 'business' | 'technical' | 'support'
-}
 
- interface Props {
+interface Props {
   show: boolean
   isActive?: boolean
   processing?: boolean
@@ -42,7 +29,6 @@ interface ConversationTempo {
   suggestions?: SuggestionItem[]
   error?: string | null
   sessionId?: string | null
-  conversationTempo?: ConversationTempo | null
   // AI Assistant props (simplified)
   aiProcessing?: boolean
   aiResponse?: string
@@ -56,7 +42,6 @@ interface Emits {
   (e: 'close'): void
   (e: 'toggle-live'): void
   (e: 'ai-query', query: string): void
-  (e: 'update-system-prompt', prompt: string): void
 }
 
 const props = defineProps<Props>()
@@ -64,49 +49,7 @@ const emit = defineEmits<Emits>()
 
 // UI State
 const copiedStates = ref<Record<string, boolean>>({})
-const showSettings = ref(false)
-const customPrompt = ref('')
-const selectedTemplate = ref('sales')
-const promptValidationError = ref<string | null>(null)
 
-// Predefined prompt templates for different scenarios
-const promptTemplates = ref([
-  {
-    id: 'sales',
-    name: 'Sales Call',
-    icon: '💼',
-    description: 'For sales conversations and client meetings',
-    prompt: `You are a sales conversation assistant. Provide natural, contextual responses based on the conversation flow. Focus on building rapport and closing deals. Keep responses concise and conversational.`
-  },
-  {
-    id: 'support',
-    name: 'Customer Support',
-    icon: '🤝',
-    description: 'For customer service and troubleshooting',
-    prompt: `You are a customer support assistant. Provide empathetic, helpful responses based on the customer's needs. Focus on problem-solving and customer satisfaction. Keep responses natural and concise.`
-  },
-  {
-    id: 'technical',
-    name: 'Technical Meeting',
-    icon: '⚡',
-    description: 'For technical discussions and problem-solving',
-    prompt: `You are a technical conversation assistant. Provide accurate, relevant responses based on the technical discussion. Focus on problem-solving and clarity. Keep responses concise and to the point.`
-  },
-  {
-    id: 'general',
-    name: 'General Business',
-    icon: '💬',
-    description: 'For general business conversations',
-    prompt: `You are a business conversation assistant. Provide professional, relevant responses based on the conversation context. Focus on moving the discussion forward productively. Keep responses natural and concise.`
-  },
-  {
-    id: 'custom',
-    name: 'Custom',
-    icon: '✏️',
-    description: 'Create your own custom prompt',
-    prompt: ''
-  }
-])
 
 
 const handleClose = () => emit('close')
@@ -131,120 +74,15 @@ const copyToClipboard = async (text: string, id?: string) => {
 }
 
 const getConversationIcon = computed(() => {
-  switch (props.conversationTempo?.conversationType) {
-    case 'business': return PhoneIcon
-    case 'support': return UserGroupIcon
-    case 'technical': return ComputerDesktopIcon
-    default: return SparklesIcon
-  }
+  return SparklesIcon
 })
 
 const statusText = computed(() => {
-  if (!props.isActive) return 'Start Live Assistant'
+  if (!props.isActive) return 'Start AI Insights'
   if (props.processing) return 'Listening...'
-  
-  const tempo = props.conversationTempo
-  if (tempo) {
-    const typeMap = {
-      business: '💼',
-      support: '🤝',
-      technical: '⚡',
-      casual: '💬'
-    }
-    return `${typeMap[tempo.conversationType] || '💬'} Live`
-  }
-  
-  return 'Live Active'
+  return 'AI Insights Active'
 })
 
-const currentTemplate = computed(() => {
-  return promptTemplates.value.find(t => t.id === selectedTemplate.value)
-})
-
-// Removed unused effectivePrompt computed
-
-// Initialize with sales template
-const initializePrompt = () => {
-  const template = promptTemplates.value.find(t => t.id === selectedTemplate.value)
-  if (template && template.prompt) {
-    emit('update-system-prompt', template.prompt)
-  }
-}
-
-const applyTemplate = (templateId: string) => {
-  selectedTemplate.value = templateId
-  const template = promptTemplates.value.find(t => t.id === templateId)
-  
-  if (template) {
-    if (templateId === 'custom') {
-      // For custom, validate before emitting
-      const validation = validatePrompt(customPrompt.value)
-      promptValidationError.value = validation.error
-      
-      if (validation.isValid) {
-        emit('update-system-prompt', customPrompt.value)
-      }
-    } else {
-      // Clear any validation errors for pre-defined templates
-      promptValidationError.value = null
-      emit('update-system-prompt', template.prompt)
-    }
-  }
-}
-
-const updateCustomPrompt = () => {
-  if (selectedTemplate.value === 'custom') {
-    const validation = validatePrompt(customPrompt.value)
-    promptValidationError.value = validation.error
-    
-    // Save to localStorage even if invalid (for persistence)
-    saveCustomPrompt()
-    
-    if (validation.isValid) {
-      emit('update-system-prompt', customPrompt.value)
-    }
-  }
-}
-
-const validatePrompt = (prompt: string) => {
-  const trimmed = prompt.trim()
-  const isValid = trimmed.length >= 10 && trimmed.length <= 2000
-  return {
-    isValid,
-    error: !isValid ? 
-      (trimmed.length < 10 ? 'Prompt must be at least 10 characters' : 
-       'Prompt must be less than 2000 characters') : null
-  }
-}
-
-// Load saved custom prompt from localStorage
-const loadSavedPrompt = () => {
-  try {
-    const saved = localStorage.getItem('liveai-custom-prompt')
-    if (saved) {
-      customPrompt.value = saved
-    }
-  } catch (error) {
-    console.warn('Failed to load saved custom prompt:', error)
-  }
-}
-
-// Save custom prompt to localStorage
-const saveCustomPrompt = () => {
-  try {
-    localStorage.setItem('liveai-custom-prompt', customPrompt.value)
-  } catch (error) {
-    console.warn('Failed to save custom prompt:', error)
-  }
-}
-
-// Initialize on mount
-watch(() => props.show, (newValue) => {
-  if (newValue) {
-    loadSavedPrompt()
-    initializePrompt()
-  }
-}, { immediate: true })
 </script>
 
 <template>
@@ -257,74 +95,12 @@ watch(() => props.show, (newValue) => {
         <div v-if="isActive" class="live-dot"></div>
       </div>
       <div class="header-right">
-        <button 
-          @click="showSettings = !showSettings" 
-          class="settings-button"
-          :class="{ 'active': showSettings }"
-          title="Settings"
-        >
-          <CogIcon class="w-4 h-4" />
-        </button>
         <button @click="handleClose" class="close-button">
           <XMarkIcon class="w-4 h-4" />
         </button>
       </div>
     </div>
     
-    <!-- Settings Panel -->
-    <div v-if="showSettings" class="settings-panel">
-      <div class="settings-header">
-        <DocumentTextIcon class="w-4 h-4 text-purple-400" />
-        <span class="text-sm font-medium text-white/90">Conversation Type</span>
-      </div>
-      
-      <!-- Template Selection -->
-      <div class="template-grid">
-        <button
-          v-for="template in promptTemplates"
-          :key="template.id"
-          @click="applyTemplate(template.id)"
-          class="template-btn"
-          :class="{ 'selected': selectedTemplate === template.id }"
-        >
-          <span class="template-icon">{{ template.icon }}</span>
-          <div class="template-info">
-            <span class="template-name">{{ template.name }}</span>
-            <span class="template-desc">{{ template.description }}</span>
-          </div>
-        </button>
-      </div>
-      
-      <!-- Custom Prompt Editor -->
-      <div v-if="selectedTemplate === 'custom'" class="custom-prompt">
-        <label class="prompt-label">Custom System Prompt:</label>
-        <textarea
-          v-model="customPrompt"
-          @input="updateCustomPrompt"
-          class="prompt-textarea"
-          :class="{ 'error': promptValidationError }"
-          rows="4"
-          placeholder="Enter your custom prompt here..."
-        />
-        <div v-if="promptValidationError" class="validation-error">
-          {{ promptValidationError }}
-        </div>
-        <div class="prompt-counter">
-          {{ customPrompt.length }}/2000
-        </div>
-      </div>
-      
-      <!-- Current Template Preview -->
-      <div v-else-if="currentTemplate" class="template-preview">
-        <div class="preview-header">
-          <span class="text-xs text-white/60">Current Template:</span>
-          <span class="text-xs text-blue-400">{{ currentTemplate.name }}</span>
-        </div>
-        <div class="preview-content">
-          <p class="text-xs text-white/70 leading-relaxed">{{ currentTemplate.prompt.split('\n')[0] }}</p>
-        </div>
-      </div>
-    </div>
     
     <!-- Main Content -->
     <div class="assistant-content">
@@ -350,7 +126,7 @@ watch(() => props.show, (newValue) => {
         <div v-else-if="suggestions && suggestions.length > 0" class="suggestions">
           <div class="suggestions-header">
             <SparklesIcon class="w-4 h-4 text-blue-500" />
-            <span class="suggestions-title">AI Response Suggestion</span>
+            <span class="suggestions-title">AI Insights</span>
           </div>
           <!-- Display primary suggestion prominently -->
           <div class="primary-suggestion">
@@ -366,7 +142,6 @@ watch(() => props.show, (newValue) => {
             >
               <div class="suggestion-text">{{ suggestion.text }}</div>
               <div class="suggestion-actions">
-                <span class="confidence-badge">{{ Math.round((suggestion.confidence || 0.8) * 100) }}% confidence</span>
                 <button class="copy-btn" :class="{ 'copied': copiedStates[suggestion.id] }">
                   <ClipboardDocumentIcon v-if="!copiedStates[suggestion.id]" class="w-4 h-4" />
                   <CheckIcon v-else class="w-4 h-4 text-green-500" />
@@ -402,10 +177,10 @@ watch(() => props.show, (newValue) => {
             />
           </div>
           <p class="empty-title">
-            {{ isActive ? 'Analyzing conversation...' : 'AI Assistant Ready' }}
+            {{ isActive ? 'Listening for insights...' : 'AI Insights Ready' }}
           </p>
           <p class="empty-subtitle">
-            {{ isActive ? 'Contextual responses will appear automatically' : 'Start to enable smart response suggestions' }}
+            {{ isActive ? 'Conversation summaries and suggestions will appear here' : 'Start to enable conversation insights' }}
           </p>
         </div>
       </div>
@@ -460,97 +235,12 @@ watch(() => props.show, (newValue) => {
   @apply w-2 h-2 bg-green-400 rounded-full animate-pulse;
 }
 
-.settings-button {
-  @apply p-1.5 rounded-lg hover:bg-white/10 transition-colors;
-  @apply text-white/40 hover:text-white/70;
-}
-
-.settings-button.active {
-  @apply bg-purple-500/20 text-purple-400;
-}
 
 .close-button {
   @apply p-1.5 rounded-lg hover:bg-white/10 transition-colors;
   @apply text-white/60 hover:text-white/90;
 }
 
-.settings-panel {
-  @apply border-b border-white/10 bg-white/[0.02] p-3;
-}
-
-.settings-header {
-  @apply flex items-center gap-2 mb-3;
-}
-
-.template-grid {
-  @apply grid grid-cols-2 gap-2 mb-3;
-}
-
-.template-btn {
-  @apply flex items-center gap-2 p-2 rounded-lg;
-  @apply bg-white/[0.02] hover:bg-white/[0.05] border border-white/10;
-  @apply transition-all duration-200 text-left;
-}
-
-.template-btn.selected {
-  @apply bg-blue-500/20 border-blue-500/40;
-}
-
-.template-icon {
-  @apply text-lg flex-shrink-0;
-}
-
-.template-info {
-  @apply flex flex-col min-w-0;
-}
-
-.template-name {
-  @apply text-xs font-medium text-white/90;
-}
-
-.template-desc {
-  @apply text-xs text-white/50 leading-tight;
-  font-size: 10px;
-}
-
-.custom-prompt {
-  @apply space-y-2;
-}
-
-.prompt-label {
-  @apply text-xs text-white/70 font-medium;
-}
-
-.prompt-textarea {
-  @apply w-full border border-white/20 rounded-lg px-2 py-2 text-white;
-  @apply placeholder-white/50 focus:outline-none focus:border-purple-500/50;
-  @apply bg-white/[0.03] transition-all duration-200 resize-none;
-  font-size: 11px;
-}
-
-.prompt-textarea.error {
-  @apply border-red-500/50 focus:border-red-500/70;
-}
-
-.validation-error {
-  @apply text-xs text-red-400 mt-1;
-}
-
-.prompt-counter {
-  @apply text-xs text-white/40 mt-1 text-right;
-}
-
-.template-preview {
-  @apply space-y-2;
-}
-
-.preview-header {
-  @apply flex items-center justify-between;
-}
-
-.preview-content {
-  @apply p-2 rounded bg-white/[0.02] border border-white/10;
-}
 
 .assistant-content {
   @apply flex-1 flex flex-col p-4 gap-4 overflow-y-auto;
@@ -618,9 +308,6 @@ watch(() => props.show, (newValue) => {
   @apply flex items-center justify-between;
 }
 
-.confidence-badge {
-  @apply text-xs text-white/50 bg-white/10 px-2 py-1 rounded-full;
-}
 
 .copy-btn {
   @apply flex items-center gap-1 px-3 py-1.5 rounded-lg;
@@ -689,10 +376,6 @@ watch(() => props.show, (newValue) => {
 @media (max-height: 700px) {
   .recommendations-area {
     @apply min-h-[150px];
-  }
-  
-  .template-grid {
-    @apply grid-cols-1;
   }
 }
 </style>
