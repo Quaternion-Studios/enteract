@@ -43,7 +43,7 @@ pub async fn set_window_transparency(window: Window, alpha: f64) -> Result<(), S
     
     #[cfg(target_os = "macos")]
     {
-        use objc::runtime::{Object, Sel};
+        use objc::runtime::Object;
         use objc::{msg_send, sel, sel_impl};
         
         if let Ok(ns_window) = window.ns_window() {

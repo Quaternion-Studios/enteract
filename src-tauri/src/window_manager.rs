@@ -37,9 +37,10 @@ pub async fn get_screen_size() -> Result<(u32, u32), String> {
     
     #[cfg(target_os = "macos")]
     {
-        use core_graphics::display::CGMainDisplay;
+        use core_graphics::display::{CGMainDisplayID, CGDisplay};
         
-        let display = CGMainDisplay();
+        let display_id = unsafe { CGMainDisplayID() };
+        let display = CGDisplay::new(display_id);
         let width = display.pixels_wide() as u32;
         let height = display.pixels_high() as u32;
         return Ok((width, height));
@@ -148,7 +149,7 @@ pub async fn get_virtual_desktop_size() -> Result<(u32, u32), String> {
         let mut max_y = f64::NEG_INFINITY;
         
         for display in displays {
-            let bounds = CGDisplayBounds(display);
+            let bounds = unsafe { CGDisplayBounds(display) };
             min_x = min_x.min(bounds.origin.x);
             min_y = min_y.min(bounds.origin.y);
             max_x = max_x.max(bounds.origin.x + bounds.size.width);

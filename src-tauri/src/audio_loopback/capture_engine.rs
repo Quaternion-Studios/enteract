@@ -1,14 +1,21 @@
-// src-tauri/src/audio_loopback/capture_engine.rs
+// Platform-agnostic audio capture engine
 use crate::audio_loopback::types::*;
-use crate::audio_loopback::device_enumerator::WASAPILoopbackEnumerator;
-use crate::audio_loopback::audio_processor::{process_audio_for_transcription, process_audio_chunk, calculate_audio_level};
+use crate::audio_loopback::platform::{get_audio_backend, AudioCaptureBackend};
+use crate::audio_loopback::audio_processor::calculate_audio_level;
 use anyhow::Result;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
-use wasapi::{DeviceCollection, Direction, Device, ShareMode, initialize_mta};
 use base64::prelude::*;
 use serde_json;
+
+// Platform-specific imports
+#[cfg(target_os = "windows")]
+use {
+    wasapi::{DeviceCollection, Direction, Device, ShareMode, initialize_mta},
+    crate::audio_loopback::platform::windows::WindowsAudioBackend,
+    crate::audio_loopback::audio_processor::process_audio_chunk,
+};
 
 #[tauri::command]
 pub async fn start_audio_loopback_capture(
@@ -72,7 +79,8 @@ pub async fn stop_audio_loopback_capture() -> Result<(), String> {
     Ok(())
 }
 
-// Main audio capture loop with reduced logging
+// Platform-specific capture loop for Windows
+#[cfg(target_os = "windows")]
 fn run_audio_capture_loop_sync(
     device_id: String,
     app_handle: AppHandle,
@@ -80,7 +88,7 @@ fn run_audio_capture_loop_sync(
 ) -> Result<()> {
     initialize_mta().map_err(|_| anyhow::anyhow!("Failed to initialize COM"))?;
     
-    let enumerator = WASAPILoopbackEnumerator::new()?;
+    let enumerator = WindowsAudioBackend::new()?;
     let device_info = enumerator.find_device_by_id(&device_id)?
         .ok_or_else(|| anyhow::anyhow!("Device not found"))?;
     
@@ -131,12 +139,10 @@ fn run_audio_capture_loop_sync(
     
     println!("✅ Audio capture initialized - {} Hz, {} channels, {} bits", 
              format.get_samplespersec(), format.get_nchannels(), format.get_bitspersample());
-    println!("📊 Device sample rate: {} Hz, Whisper target: 16000 Hz", format.get_samplespersec());
     
     // Validate format
     let bits_per_sample = format.get_bitspersample();
     let channels = format.get_nchannels();
-    let _sample_rate = format.get_samplespersec();  // Unused variable warning fix
     
     if bits_per_sample != 16 && bits_per_sample != 32 {
         return Err(anyhow::anyhow!("Unsupported bits per sample: {}", bits_per_sample));
@@ -153,17 +159,16 @@ fn run_audio_capture_loop_sync(
     let mut last_emit = Instant::now();
     let mut error_count = 0u32;
     
-    // Transcription buffer setup - MATCHING PYTHON CONFIG
+    // Transcription buffer setup
     let mut transcription_buffer: Vec<f32> = Vec::new();
-    let transcription_buffer_duration = 4.0;  // Python: BUFFER_DURATION = 4.0
-    // Important: Buffer size is at 16kHz (Whisper rate), not device rate
+    let transcription_buffer_duration = 4.0;
     let transcription_buffer_size = (16000.0 * transcription_buffer_duration) as usize;
     let mut last_transcription = Instant::now();
-    let transcription_interval = Duration::from_millis(800);  // Python: PROCESSING_INTERVAL = 0.8
-    let min_audio_length = 1.5;  // Python: MIN_AUDIO_LENGTH = 1.5
-    let min_audio_samples = (16000.0 * min_audio_length) as usize;  // At 16kHz
+    let transcription_interval = Duration::from_millis(800);
+    let min_audio_length = 1.5;
+    let min_audio_samples = (16000.0 * min_audio_length) as usize;
     
-    // Main capture loop with reduced logging
+    // Main capture loop
     loop {
         if stop_rx.try_recv().is_ok() {
             break;
@@ -199,7 +204,7 @@ fn run_audio_capture_loop_sync(
         let safe_buffer_size = std::cmp::max(calculated_buffer_size, 4096);
         let mut buffer = vec![0u8; safe_buffer_size];
         
-        let (frames_read, flags) = match capture_client.read_from_device(bytes_per_frame as usize, &mut buffer) {
+        let (frames_read, _flags) = match capture_client.read_from_device(bytes_per_frame as usize, &mut buffer) {
             Ok(result) => {
                 if error_count > 0 {
                     error_count = std::cmp::max(0, error_count - 1);
@@ -229,17 +234,7 @@ fn run_audio_capture_loop_sync(
         
         let audio_data = &buffer[..actual_bytes];
         
-        // Detect completely silent audio
-        let is_completely_silent = audio_data.iter().all(|&b| b == 0);
-        if is_completely_silent && frames_read > 100 {
-            // Only log this occasionally to avoid spam
-            if start_time.elapsed().as_secs() % 30 == 0 {
-                println!("⚠️ No system audio detected - check device selection");
-            }
-        }
-        
-        // Process audio - MATCHING PYTHON PIPELINE
-        // Python always outputs at 16kHz for Whisper
+        // Process audio
         let processed_audio = process_audio_chunk(
             audio_data,
             bits_per_sample,
@@ -262,121 +257,236 @@ fn run_audio_capture_loop_sync(
         if transcription_buffer.len() >= min_audio_samples && 
            now.duration_since(last_transcription) > transcription_interval {
             
-            // Python checks RMS > 100 for int16, which is ~0.00305 for float32
             let buffer_rms = (transcription_buffer.iter().map(|&x| x * x).sum::<f32>() / transcription_buffer.len() as f32).sqrt();
-            let buffer_level = calculate_audio_level(&transcription_buffer);
             
-            // Log buffer state every transcription attempt
-            println!("[CAPTURE] Buffer: {} samples, RMS: {:.6}, Level: {:.1}dB", 
-                     transcription_buffer.len(), buffer_rms, buffer_level);
-            
-            if buffer_rms > 0.00305 {  // Match Python's RMS threshold
-                // The transcription buffer already contains mono f32 samples at 16kHz
-                // We need to convert to stereo PCM16 bytes for the transcription function
-                // which expects stereo input (it will convert back to mono)
-                let int16_samples: Vec<i16> = transcription_buffer.iter()
-                    .map(|&sample| (sample * 32767.0).clamp(-32768.0, 32767.0) as i16)
-                    .collect();
+            if buffer_rms > 0.00305 {
+                let chunk_data = transcription_buffer[..std::cmp::min(transcription_buffer.len(), transcription_buffer_size)].to_vec();
                 
-                // Create stereo PCM16 by duplicating mono samples
-                let mut stereo_pcm16_bytes = Vec::with_capacity(int16_samples.len() * 4);
-                for &sample in &int16_samples {
-                    let bytes = sample.to_le_bytes();
-                    stereo_pcm16_bytes.extend_from_slice(&bytes);  // Left channel
-                    stereo_pcm16_bytes.extend_from_slice(&bytes);  // Right channel (duplicate)
-                }
-                let pcm16_bytes = stereo_pcm16_bytes;
+                let base64_audio = BASE64_STANDARD.encode(&chunk_data.iter()
+                    .flat_map(|&x| x.to_le_bytes().to_vec())
+                    .collect::<Vec<u8>>());
                 
-                let app_handle_clone = app_handle.clone();
-                let audio_bytes_clone = pcm16_bytes.clone();
-                // Important: We're passing 16kHz since we already resampled
-                let sample_rate = 16000;
-                
-                println!("[CAPTURE] Sending {} bytes for transcription (RMS: {:.6})", 
-                         pcm16_bytes.len(), buffer_rms);
-                
-                tokio::spawn(async move {
-                    match process_audio_for_transcription(
-                        audio_bytes_clone,
-                        sample_rate,
-                        app_handle_clone
-                    ).await {
-                        Ok(text) => {
-                            if !text.is_empty() {
-                                println!("[CAPTURE] Transcription result: '{}'", text);
-                            }
-                        },
-                        Err(e) => println!("[CAPTURE] Transcription error: {}", e)
-                    }
+                let payload = serde_json::json!({
+                    "audio": base64_audio,
+                    "sample_rate": 16000,
+                    "channels": 1,
+                    "bits_per_sample": 32,
+                    "timestamp": start_time.elapsed().as_millis()
                 });
                 
-                last_transcription = now;
+                let _ = app_handle.emit("audio-chunk-ready", payload);
                 
-                // Keep overlap - Python uses 1.0 second at 16kHz
-                let overlap_duration = 1.0;
-                let overlap_size = (16000.0 * overlap_duration) as usize;
-                if transcription_buffer.len() > overlap_size {
-                    let samples_to_remove = transcription_buffer.len() - overlap_size;
-                    transcription_buffer.drain(0..samples_to_remove);
+                last_transcription = now;
+                let shift_amount = transcription_buffer_size / 2;
+                if transcription_buffer.len() > shift_amount {
+                    transcription_buffer.drain(0..shift_amount);
                 }
             }
         }
         
-        // Emit audio chunk periodically with reduced logging
-        let now = Instant::now();
+        // Audio level updates
         if now.duration_since(last_emit) > Duration::from_millis(100) {
-            let pcm16_data: Vec<i16> = processed_audio.iter()
-                .map(|&sample| (sample * 32767.0).clamp(-32768.0, 32767.0) as i16)
-                .collect();
-            
-            let audio_bytes: Vec<u8> = pcm16_data.iter()
-                .flat_map(|&sample| sample.to_le_bytes())
-                .collect();
+            let elapsed = start_time.elapsed().as_secs_f64();
+            let samples_per_sec = if elapsed > 0.0 {
+                (total_samples as f64 / elapsed) as u32
+            } else {
+                0
+            };
             
             let level = calculate_audio_level(&processed_audio);
             
-            let _emit_result = app_handle.emit("audio-chunk", serde_json::json!({
-                "deviceId": device_id,
-                "audioData": base64::prelude::BASE64_STANDARD.encode(&audio_bytes),
-                "sampleRate": device_info.sample_rate,
-                "channels": 1,
+            let _ = app_handle.emit("audio-level", serde_json::json!({
                 "level": level,
-                "timestamp": chrono::Utc::now().timestamp_millis(),
-                "duration": start_time.elapsed().as_secs(),
-                "totalSamples": total_samples
+                "capturing": true,
+                "samples_per_sec": samples_per_sec,
+                "device": device_id
             }));
             
             last_emit = now;
         }
     }
     
+    // Cleanup
     let _ = audio_client.stop_stream();
-    println!("Audio capture stopped");
     
+    println!("🛑 Audio capture stopped");
     Ok(())
 }
 
-// Helper function to find WASAPI device
-fn find_wasapi_device(device_info: &AudioLoopbackDevice) -> Result<Device> {
-    let direction = match device_info.device_type {
-        DeviceType::Render => Direction::Render,
-        DeviceType::Capture => Direction::Capture,
-    };
+// Platform-specific capture loop for macOS and others
+#[cfg(not(target_os = "windows"))]
+fn run_audio_capture_loop_sync(
+    device_id: String,
+    app_handle: AppHandle,
+    mut stop_rx: mpsc::Receiver<()>
+) -> Result<()> {
+    use rubato::{Resampler, FftFixedInOut};
+    let backend = get_audio_backend()?;
+    let stream = backend.start_capture(&device_id)?;
     
-    let device_collection = DeviceCollection::new(&direction)
-        .map_err(|_| anyhow::anyhow!("Failed to create device collection"))?;
-    let device_count = device_collection.get_nbr_devices()
-        .map_err(|_| anyhow::anyhow!("Failed to get device count"))?;
+    println!("✅ Audio capture initialized - {} Hz, {} channels", 
+             stream.sample_rate, stream.channels);
     
-    for i in 0..device_count {
-        if let Ok(device) = device_collection.get_device_at_index(i) {
-            if let Ok(id) = device.get_id() {
-                if id == device_info.id {
-                    return Ok(device);
+    let start_time = Instant::now();
+    let mut total_samples = 0u64;
+    let mut last_emit = Instant::now();
+    
+    // Transcription buffer setup
+    let mut transcription_buffer: Vec<f32> = Vec::new();
+    let transcription_buffer_duration = 4.0;
+    let transcription_buffer_size = (16000.0 * transcription_buffer_duration) as usize;
+    let mut last_transcription = Instant::now();
+    let transcription_interval = Duration::from_millis(800);
+    let min_audio_length = 1.5;
+    let min_audio_samples = (16000.0 * min_audio_length) as usize;
+    
+    // Main capture loop
+    loop {
+        if stop_rx.try_recv().is_ok() {
+            break;
+        }
+        
+        // Try to receive audio data
+        match stream.receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(audio_data) => {
+                // Process if we need to resample
+                let processed_audio = if stream.sample_rate != 16000 {
+                    // Resample to 16kHz
+                    let resampler = rubato::FftFixedInOut::<f32>::new(
+                        stream.sample_rate as usize,
+                        16000,
+                        audio_data.len() / stream.channels as usize,
+                        stream.channels as usize,
+                    );
+                    
+                    if let Ok(mut resampler) = resampler {
+                        let mut input = vec![Vec::new(); stream.channels as usize];
+                        for (i, sample) in audio_data.iter().enumerate() {
+                            input[i % stream.channels as usize].push(*sample);
+                        }
+                        
+                        if let Ok(output) = resampler.process(&input, None) {
+                            // Convert to mono if needed
+                            if output.len() > 1 {
+                                output[0].iter()
+                                    .zip(output[1].iter())
+                                    .map(|(l, r)| (l + r) / 2.0)
+                                    .collect()
+                            } else {
+                                output[0].clone()
+                            }
+                        } else {
+                            audio_data
+                        }
+                    } else {
+                        audio_data
+                    }
+                } else {
+                    audio_data
+                };
+                
+                total_samples += processed_audio.len() as u64;
+                transcription_buffer.extend_from_slice(&processed_audio);
+                
+                // Trim buffer
+                if transcription_buffer.len() > transcription_buffer_size * 2 {
+                    let excess = transcription_buffer.len() - transcription_buffer_size;
+                    transcription_buffer.drain(0..excess);
                 }
+                
+                // Try transcription
+                let now = Instant::now();
+                if transcription_buffer.len() >= min_audio_samples && 
+                   now.duration_since(last_transcription) > transcription_interval {
+                    
+                    let buffer_rms = (transcription_buffer.iter().map(|&x| x * x).sum::<f32>() / transcription_buffer.len() as f32).sqrt();
+                    
+                    if buffer_rms > 0.00305 {
+                        let chunk_data = transcription_buffer[..std::cmp::min(transcription_buffer.len(), transcription_buffer_size)].to_vec();
+                        
+                        let base64_audio = BASE64_STANDARD.encode(&chunk_data.iter()
+                            .flat_map(|&x| x.to_le_bytes().to_vec())
+                            .collect::<Vec<u8>>());
+                        
+                        let payload = serde_json::json!({
+                            "audio": base64_audio,
+                            "sample_rate": 16000,
+                            "channels": 1,
+                            "bits_per_sample": 32,
+                            "timestamp": start_time.elapsed().as_millis()
+                        });
+                        
+                        let _ = app_handle.emit("audio-chunk-ready", payload);
+                        
+                        last_transcription = now;
+                        let shift_amount = transcription_buffer_size / 2;
+                        if transcription_buffer.len() > shift_amount {
+                            transcription_buffer.drain(0..shift_amount);
+                        }
+                    }
+                }
+                
+                // Audio level updates
+                if now.duration_since(last_emit) > Duration::from_millis(100) {
+                    let elapsed = start_time.elapsed().as_secs_f64();
+                    let samples_per_sec = if elapsed > 0.0 {
+                        (total_samples as f64 / elapsed) as u32
+                    } else {
+                        0
+                    };
+                    
+                    let level = calculate_audio_level(&processed_audio);
+                    
+                    let _ = app_handle.emit("audio-level", serde_json::json!({
+                        "level": level,
+                        "capturing": true,
+                        "samples_per_sec": samples_per_sec,
+                        "device": device_id.clone()
+                    }));
+                    
+                    last_emit = now;
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // No data available, continue
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                // Stream disconnected
+                break;
             }
         }
     }
     
-    Err(anyhow::anyhow!("Could not find device with ID: {}", device_info.id))
+    // Call stop handle
+    if let Err(e) = (stream.stop_handle)() {
+        eprintln!("Error stopping stream: {}", e);
+    }
+    
+    println!("🛑 Audio capture stopped");
+    Ok(())
+}
+
+// Helper function for Windows
+#[cfg(target_os = "windows")]
+fn find_wasapi_device(device_info: &AudioLoopbackDevice) -> Result<Device> {
+    let collection = match device_info.device_type {
+        DeviceType::Render => DeviceCollection::new(&Direction::Render),
+        DeviceType::Capture => DeviceCollection::new(&Direction::Capture),
+    }.map_err(|_| anyhow::anyhow!("Failed to create device collection"))?;
+    
+    let count = collection.get_count()
+        .map_err(|_| anyhow::anyhow!("Failed to get device count"))?;
+    
+    for i in 0..count {
+        let device = collection.get_device_at_index(i)
+            .map_err(|_| anyhow::anyhow!("Failed to get device at index {}", i))?;
+        
+        if let Ok(id) = device.get_id() {
+            if id == device_info.id {
+                return Ok(device);
+            }
+        }
+    }
+    
+    Err(anyhow::anyhow!("Device not found: {}", device_info.id))
 }

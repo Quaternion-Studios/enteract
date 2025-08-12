@@ -7,8 +7,10 @@
 // 2. Enhanced transcription quality filtering to prevent "(crying)" artifacts
 // 3. Split large file into manageable modules
 // 4. Maintained all sophisticated features from the sandbox implementation
+// 5. Added cross-platform support for Windows and macOS
 
 pub mod types;
+pub mod platform;
 pub mod device_enumerator;
 pub mod audio_processor; 
 pub mod capture_engine;

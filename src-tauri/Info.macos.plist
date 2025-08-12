@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Enteract needs access to your microphone to capture audio for transcription.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Enteract needs access to your camera for eye tracking features.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Enteract needs screen recording permission to capture screenshots.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Enteract needs to control window transparency and positioning.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Enteract needs accessibility permissions to control window behavior.</string>
+</dict>
+</plist>
