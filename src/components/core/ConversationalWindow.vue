@@ -111,7 +111,7 @@ const {
 const {
   isActive: isLiveAIActive,
   response: liveAIResponse,
-  suggestions: liveAISuggestions,
+  insights: liveAIInsights,
   isProcessing: liveAIIsProcessing,
   error: liveAIError,
   startLiveAI,
@@ -604,7 +604,7 @@ const formatSessionDuration = () => {
           :is-active="isLiveAIActive"
           :processing="liveAIIsProcessing"
           :response="liveAIResponse"
-          :suggestions="liveAISuggestions"
+          :insights="liveAIInsights"
           :error="liveAIError"
           :ai-processing="aiIsProcessing"
           :ai-response="aiResponse"
@@ -614,6 +614,7 @@ const formatSessionDuration = () => {
           @close="showLiveAI = false"
           @toggle-live="toggleLiveAIActive"
           @ai-query="handleAIQuery"
+          @toggle-compact="() => {}"
         />
       </div>
     </div>

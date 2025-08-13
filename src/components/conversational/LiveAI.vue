@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { 
   XMarkIcon, 
   PlayIcon, 
@@ -7,17 +7,17 @@ import {
   ClipboardDocumentIcon,
   CheckIcon,
   BoltIcon,
-  SparklesIcon
+  SparklesIcon,
+  ArrowsPointingInIcon,
+  ArrowsPointingOutIcon
 } from '@heroicons/vue/24/outline'
 
-interface SuggestionItem {
+interface InsightItem {
   id: string
   text: string
   timestamp: number
   contextLength: number
-  responseType?: string
-  priority?: 'immediate' | 'soon' | 'normal' | 'low'
-  confidence?: number
+  type: 'insight' | 'welcome'
 }
 
 
@@ -26,7 +26,7 @@ interface Props {
   isActive?: boolean
   processing?: boolean
   response?: string
-  suggestions?: SuggestionItem[]
+  insights?: InsightItem[]
   error?: string | null
   sessionId?: string | null
   // AI Assistant props (simplified)
@@ -42,6 +42,7 @@ interface Emits {
   (e: 'close'): void
   (e: 'toggle-live'): void
   (e: 'ai-query', query: string): void
+  (e: 'toggle-compact'): void
 }
 
 const props = defineProps<Props>()
@@ -49,11 +50,17 @@ const emit = defineEmits<Emits>()
 
 // UI State
 const copiedStates = ref<Record<string, boolean>>({})
+const insightsContainer = ref<HTMLElement | null>(null)
+const isCompactMode = ref(false)
 
 
 
 const handleClose = () => emit('close')
 const handleToggleLive = () => emit('toggle-live')
+const handleToggleCompact = () => {
+  isCompactMode.value = !isCompactMode.value
+  emit('toggle-compact')
+}
 
 
 const copyToClipboard = async (text: string, id?: string) => {
@@ -73,28 +80,57 @@ const copyToClipboard = async (text: string, id?: string) => {
   }
 }
 
+const scrollToBottom = () => {
+  nextTick(() => {
+    if (insightsContainer.value) {
+      insightsContainer.value.scrollTop = insightsContainer.value.scrollHeight
+    }
+  })
+}
+
+const formatTimestamp = (timestamp: number) => {
+  return new Date(timestamp).toLocaleTimeString('en-US', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+// Auto-scroll when new insights are added
+watch(() => props.insights?.length, () => {
+  scrollToBottom()
+}, { flush: 'post' })
+
 const getConversationIcon = computed(() => {
   return SparklesIcon
 })
 
 const statusText = computed(() => {
-  if (!props.isActive) return 'Start AI Insights'
-  if (props.processing) return 'Listening...'
-  return 'AI Insights Active'
+  if (!props.isActive) return 'Start Conversation Coach'
+  if (props.processing) return 'Analyzing...'
+  return 'Coach Active'
 })
 
 </script>
 
 <template>
-  <div v-if="show" :class="['live-assistant', 'live-ai-drawer', { 'fullscreen': props.fullScreen || props.isActive }]">
+  <div v-if="show" :class="['live-assistant', 'live-ai-drawer', { 'fullscreen': props.fullScreen, 'compact-mode': isCompactMode }]">
     <!-- Minimal Header -->
     <div class="assistant-header">
       <div class="header-left">
-        <component :is="getConversationIcon" class="w-4 h-4 text-blue-500" />
+        <component :is="getConversationIcon" class="w-4 h-4 text-orange-500" />
         <span class="header-title">{{ statusText }}</span>
         <div v-if="isActive" class="live-dot"></div>
       </div>
       <div class="header-right">
+        <button 
+          @click="handleToggleCompact"
+          class="compact-button"
+          :class="{ 'active': isCompactMode }"
+          :title="isCompactMode ? 'Expand drawer to normal width' : 'Compact mode (25% width)'"
+        >
+          <component :is="isCompactMode ? ArrowsPointingOutIcon : ArrowsPointingInIcon" class="w-4 h-4" />
+        </button>
         <button @click="handleClose" class="close-button">
           <XMarkIcon class="w-4 h-4" />
         </button>
@@ -112,76 +148,67 @@ const statusText = computed(() => {
           :class="{ 'active': isActive }"
         >
           <component :is="isActive ? StopIcon : PlayIcon" class="w-4 h-4" />
-          <span>{{ isActive ? 'Stop' : 'Start' }}</span>
+          <span>{{ isActive ? 'Stop Coach' : 'Start Coach' }}</span>
         </button>
       </div>
       
-      <!-- Large Recommendations Area -->
-      <div class="recommendations-area">
-        <div v-if="processing || aiProcessing" class="processing">
-          <BoltIcon class="w-5 h-5 animate-pulse text-blue-500" />
-          <span>Thinking...</span>
-        </div>
-        
-        <div v-else-if="suggestions && suggestions.length > 0" class="suggestions">
-          <div class="suggestions-header">
-            <SparklesIcon class="w-4 h-4 text-blue-500" />
-            <span class="suggestions-title">AI Insights</span>
-          </div>
-          <!-- Display primary suggestion prominently -->
-          <div class="primary-suggestion">
-            <div
-              v-for="suggestion in suggestions"
-              :key="suggestion.id"
-              @click="copyToClipboard(suggestion.text, suggestion.id)"
-              class="suggestion-card"
-              :class="{ 
-                'urgent': suggestion.priority === 'immediate',
-                'copied': copiedStates[suggestion.id]
-              }"
+      <!-- Chat-like Insights Feed -->
+      <div class="insights-feed">
+        <div ref="insightsContainer" class="insights-container">
+          <!-- Show insights as chat messages -->
+          <div v-if="insights && insights.length > 0" class="insights-list">
+            <div 
+              v-for="insight in insights" 
+              :key="insight.id"
+              class="insight-message"
+              :class="{ 'welcome-message': insight.type === 'welcome' }"
             >
-              <div class="suggestion-text">{{ suggestion.text }}</div>
-              <div class="suggestion-actions">
-                <button class="copy-btn" :class="{ 'copied': copiedStates[suggestion.id] }">
-                  <ClipboardDocumentIcon v-if="!copiedStates[suggestion.id]" class="w-4 h-4" />
-                  <CheckIcon v-else class="w-4 h-4 text-green-500" />
-                  <span>{{ copiedStates[suggestion.id] ? 'Copied!' : 'Copy' }}</span>
+              <div class="message-header">
+                <div class="message-icon">
+                  <SparklesIcon class="w-3 h-3 text-orange-400" />
+                </div>
+                <span class="message-time">{{ formatTimestamp(insight.timestamp) }}</span>
+                <button 
+                  @click="copyToClipboard(insight.text, insight.id)"
+                  class="copy-btn"
+                  :class="{ 'copied': copiedStates[insight.id] }"
+                  title="Copy insight"
+                >
+                  <ClipboardDocumentIcon v-if="!copiedStates[insight.id]" class="w-3 h-3" />
+                  <CheckIcon v-else class="w-3 h-3 text-green-400" />
                 </button>
+              </div>
+              <div class="message-content">
+                <div class="insight-text" v-html="insight.text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')" />
               </div>
             </div>
           </div>
-        </div>
-        
-        <div v-else-if="aiResponse" class="ai-response">
-          <div class="response-header">
-            <SparklesIcon class="w-4 h-4 text-blue-500" />
-            <span class="response-title">AI Analysis</span>
-            <button 
-              @click="copyToClipboard(aiResponse, 'ai-response')"
-              class="copy-btn"
-              :class="{ 'copied': copiedStates['ai-response'] }"
-            >
-              <component 
-                :is="copiedStates['ai-response'] ? CheckIcon : ClipboardDocumentIcon" 
-                class="w-3 h-3" 
-              />
-            </button>
+          
+          <!-- Processing indicator -->
+          <div v-if="processing || aiProcessing" class="processing-message">
+            <div class="message-header">
+              <div class="message-icon">
+                <BoltIcon class="w-3 h-3 animate-pulse text-orange-400" />
+              </div>
+              <span class="message-time">{{ formatTimestamp(Date.now()) }}</span>
+            </div>
+            <div class="message-content">
+              <div class="processing-text">Analyzing conversation...</div>
+            </div>
           </div>
-          <p class="response-text">{{ aiResponse }}</p>
-        </div>
-        
-        <div v-else class="empty-state">
-          <div class="empty-icon">
-            <component :is="isActive ? BoltIcon : SparklesIcon" 
-              class="w-8 h-8 text-gray-400" 
-            />
+          
+          <!-- Empty state -->
+          <div v-if="(!insights || insights.length === 0) && !processing && !aiProcessing" class="empty-state">
+            <div class="empty-icon">
+              <SparklesIcon class="w-8 h-8 text-gray-400" />
+            </div>
+            <p class="empty-title">
+              {{ isActive ? 'Listening for insights...' : 'Conversation Coach Ready' }}
+            </p>
+            <p class="empty-subtitle">
+              {{ isActive ? 'Real-time insights will appear here as the conversation progresses' : 'Start to enable conversation coaching' }}
+            </p>
           </div>
-          <p class="empty-title">
-            {{ isActive ? 'Listening for insights...' : 'AI Insights Ready' }}
-          </p>
-          <p class="empty-subtitle">
-            {{ isActive ? 'Conversation summaries and suggestions will appear here' : 'Start to enable conversation insights' }}
-          </p>
         </div>
       </div>
       
@@ -197,10 +224,16 @@ const statusText = computed(() => {
 <style scoped>
 .live-assistant {
   @apply bg-white/[0.02] backdrop-blur-xl border-l border-white/10;
-  @apply flex flex-col h-full;
+  @apply flex flex-col h-full transition-all duration-300 ease-in-out;
   width: 340px;
   min-width: 340px;
   max-width: 400px;
+}
+
+.live-assistant.compact-mode {
+  width: 25vw;
+  min-width: 280px;
+  max-width: 25vw;
 }
 
 .live-assistant.fullscreen {
@@ -214,9 +247,14 @@ const statusText = computed(() => {
   @apply border border-white/10 rounded-none;
 }
 
+.live-assistant.fullscreen.compact-mode {
+  width: 100%;
+  max-width: none;
+}
+
 .assistant-header {
   @apply flex items-center justify-between px-4 py-3 border-b border-white/10;
-  @apply bg-gradient-to-r from-blue-500/5 to-transparent;
+  @apply bg-gradient-to-r from-orange-500/5 to-transparent;
 }
 
 .header-left {
@@ -236,6 +274,15 @@ const statusText = computed(() => {
 }
 
 
+.compact-button {
+  @apply p-1.5 rounded-lg hover:bg-white/10 transition-colors;
+  @apply text-white/40 hover:text-white/70;
+}
+
+.compact-button.active {
+  @apply bg-orange-500/20 text-orange-400;
+}
+
 .close-button {
   @apply p-1.5 rounded-lg hover:bg-white/10 transition-colors;
   @apply text-white/60 hover:text-white/90;
@@ -252,8 +299,8 @@ const statusText = computed(() => {
 
 .toggle-button {
   @apply flex items-center gap-2 px-4 py-2 rounded-xl font-medium;
-  @apply bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 hover:text-blue-300;
-  @apply border border-blue-500/30 hover:border-blue-500/50;
+  @apply bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 hover:text-orange-300;
+  @apply border border-orange-500/30 hover:border-orange-500/50;
   @apply transition-all duration-200;
 }
 
@@ -262,97 +309,91 @@ const statusText = computed(() => {
   @apply border-green-500/30 hover:border-green-500/50;
 }
 
-.recommendations-area {
-  @apply flex-1 flex flex-col min-h-[200px] bg-white/[0.02] rounded-xl p-3;
-  @apply border border-white/10;
+.insights-feed {
+  @apply flex-1 flex flex-col min-h-[200px];
 }
 
-.primary-suggestion {
+.insights-container {
+  @apply flex-1 overflow-y-auto bg-white/[0.02] rounded-xl border border-white/10;
+  @apply p-3 space-y-3 scroll-smooth;
+  max-height: calc(100vh - 200px);
+}
+
+.compact-mode .insights-container {
+  @apply p-2 space-y-2;
+}
+
+.compact-mode .insight-text {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.compact-mode .message-header {
+  @apply px-2 py-1;
+}
+
+.compact-mode .message-content {
+  @apply p-2;
+}
+
+.insights-list {
   @apply space-y-3;
 }
 
-.suggestion-card {
-  @apply p-4 rounded-xl bg-white/[0.05] hover:bg-white/[0.08];
-  @apply border border-white/10 hover:border-white/20;
-  @apply cursor-pointer transition-all duration-200;
+.insight-message {
+  @apply bg-white/[0.03] rounded-lg border border-white/10;
+  @apply transition-all duration-200;
 }
 
-.suggestion-card.urgent {
-  @apply border-orange-500/40 bg-orange-500/10;
-  animation: gentle-pulse 2s infinite;
+.insight-message.welcome-message {
+  @apply bg-orange-500/10 border-orange-500/30;
 }
 
-.suggestion-card.copied {
-  @apply bg-green-500/20 border-green-500/40;
+.message-header {
+  @apply flex items-center justify-between px-3 py-2 border-b border-white/10;
+  @apply bg-white/[0.02] rounded-t-lg;
 }
 
-.processing {
-  @apply flex items-center justify-center gap-2 py-8 text-blue-400;
+.message-icon {
+  @apply flex items-center gap-2;
 }
 
-.suggestions-header {
-  @apply flex items-center gap-2 mb-3 pb-2 border-b border-white/10;
+.message-time {
+  @apply text-xs text-white/40 font-mono;
 }
 
-.suggestions-title {
-  @apply text-sm font-semibold text-white/90;
+.message-content {
+  @apply p-3;
 }
 
-.suggestion-text {
-  @apply text-sm text-white/90 leading-relaxed mb-3;
-  font-size: 14px;
-  line-height: 1.6;
+.insight-text {
+  @apply text-sm text-white/90 leading-relaxed whitespace-pre-wrap;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
-.suggestion-actions {
-  @apply flex items-center justify-between;
+.processing-message {
+  @apply bg-orange-500/10 rounded-lg border border-orange-500/30;
+}
+
+.processing-text {
+  @apply text-sm text-orange-400 italic;
 }
 
 
-.copy-btn {
-  @apply flex items-center gap-1 px-3 py-1.5 rounded-lg;
-  @apply bg-white/10 hover:bg-white/20 text-white/70 hover:text-white/90;
-  @apply transition-all duration-200 text-xs font-medium;
-}
-
-.copy-btn.copied {
-  @apply bg-green-500/20 text-green-400;
-}
-
-@keyframes gentle-pulse {
-  0%, 100% { border-color: rgba(251, 146, 60, 0.4); }
-  50% { border-color: rgba(251, 146, 60, 0.6); }
-}
-
-.ai-response {
-  @apply p-3 rounded-lg bg-blue-500/10 border border-blue-500/30;
-}
-
-.response-header {
-  @apply flex items-center gap-2 mb-2;
-}
-
-.response-title {
-  @apply text-sm font-medium text-blue-400 flex-1;
-}
 
 .copy-btn {
   @apply p-1 rounded hover:bg-white/10 text-white/40 hover:text-white/80;
-  @apply transition-colors;
+  @apply transition-colors duration-200;
 }
 
 .copy-btn.copied {
   @apply text-green-400;
 }
 
-.response-text {
-  @apply text-xs text-white/80 leading-relaxed whitespace-pre-wrap;
-  font-size: 12px;
-  line-height: 1.5;
-}
 
 .empty-state {
-  @apply flex-1 flex flex-col items-center justify-center py-8 text-center;
+  @apply flex-1 flex flex-col items-center justify-center py-12 text-center;
 }
 
 .empty-icon {
@@ -374,8 +415,26 @@ const statusText = computed(() => {
 
 /* Responsive adjustments */
 @media (max-height: 700px) {
-  .recommendations-area {
-    @apply min-h-[150px];
+  .insights-container {
+    max-height: calc(100vh - 180px);
   }
+}
+
+/* Scrollbar styling */
+.insights-container::-webkit-scrollbar {
+  width: 4px;
+}
+
+.insights-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.insights-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+}
+
+.insights-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 </style>

@@ -16,20 +16,19 @@ export interface LiveAIResponse {
   sessionId: string
 }
 
-export interface SuggestionItem {
+export interface InsightItem {
   id: string
   text: string
   timestamp: number
   contextLength: number
-  priority?: 'immediate' | 'soon' | 'normal' | 'low'
-  confidence?: number
+  type: 'insight' | 'welcome'
 }
 
 export function useLiveAI() {
   const isActive = ref(false)
   const sessionId = ref<string | null>(null)
   const response = ref('')
-  const suggestions = ref<SuggestionItem[]>([])
+  const insights = ref<InsightItem[]>([])
   const isProcessing = ref(false)
   const error = ref<string | null>(null)
   const isAnalyzing = ref(false)
@@ -58,25 +57,31 @@ export function useLiveAI() {
           console.log('🚀 Live AI streaming started')
           isProcessing.value = true
           response.value = ''
-          // Clear old suggestions when starting fresh analysis
-          suggestions.value = []
+          // Clear old insights when starting fresh analysis
+          insights.value = []
         } else if (data.type === 'chunk') {
           response.value += data.text
         } else if (data.type === 'complete') {
           console.log('✅ Live AI streaming completed')
           isProcessing.value = false
           
-          // Add the completed response to suggestions list
+          // Add the completed response to insights list
           if (response.value.trim()) {
-            const suggestion: SuggestionItem = {
-              id: `suggestion-${Date.now()}`,
+            const insight: InsightItem = {
+              id: `insight-${Date.now()}`,
               text: response.value.trim(),
               timestamp: Date.now(),
-              contextLength: currentMessages?.length || 0
+              contextLength: currentMessages?.length || 0,
+              type: 'insight'
             }
             
-            // Replace all suggestions with the new one
-            suggestions.value = [suggestion]
+            // Add to insights array (don't replace, accumulate)
+            insights.value.push(insight)
+            
+            // Keep only last 20 insights to prevent excessive memory usage while preserving conversation history
+            if (insights.value.length > 20) {
+              insights.value = insights.value.slice(-20)
+            }
           }
         } else if (data.type === 'error') {
           console.error('❌ Live AI streaming error:', data.error)
@@ -89,13 +94,14 @@ export function useLiveAI() {
       console.log('🚀 Live AI session started:', newSessionId)
       
       // Initial welcome message
-      const welcomeSuggestion: SuggestionItem = {
+      const welcomeInsight: InsightItem = {
         id: 'welcome',
-        text: "AI Assistant is active. I'll provide conversation summaries and suggestions.",
+        text: "AI Conversation Coach is active. I'll provide real-time insights and suggestions to help you navigate important conversations more effectively.",
         timestamp: Date.now(),
-        contextLength: 0
+        contextLength: 0,
+        type: 'welcome'
       }
-      suggestions.value = [welcomeSuggestion]
+      insights.value = [welcomeInsight]
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to start Live AI'
       console.error('Failed to start Live AI:', err)
@@ -118,7 +124,7 @@ export function useLiveAI() {
       
       isActive.value = false
       response.value = ''
-      suggestions.value = []
+      insights.value = []
       sessionId.value = null
       
       // Clear any pending analysis
@@ -186,7 +192,7 @@ export function useLiveAI() {
     // Only trigger if the last message is from system/loopback
     const lastMessage = messages[messages.length - 1]
     if (lastMessage && lastMessage.source === 'loopback' && !lastMessage.isPreview) {
-      console.log('🎤 System is speaking, generating response suggestions...')
+      console.log('🎤 System is speaking, generating conversation insights...')
       await analyzeConversationContext(messages)
     }
   }
@@ -214,8 +220,8 @@ export function useLiveAI() {
       const now = Date.now()
       const timeSinceLastAnalysis = now - lastAnalysisTime
       
-      // Minimum interval between analyses (5 seconds)
-      if (timeSinceLastAnalysis < 5000 && suggestions.value.length > 0) {
+      // Minimum interval between analyses (7.5 seconds)
+      if (timeSinceLastAnalysis < 7500 && insights.value.length > 1) {
         console.log(`⏳ Skipping - analyzed recently`)
         return
       }
@@ -244,7 +250,7 @@ export function useLiveAI() {
     isActive.value = false
     sessionId.value = null
     response.value = ''
-    suggestions.value = []
+    insights.value = []
     isProcessing.value = false
     error.value = null
     lastAnalysisTime = 0
@@ -254,7 +260,7 @@ export function useLiveAI() {
     isActive,
     sessionId,
     response,
-    suggestions,
+    insights,
     isProcessing,
     error,
     startLiveAI,
