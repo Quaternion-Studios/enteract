@@ -17,7 +17,7 @@ interface InsightItem {
   text: string
   timestamp: number
   contextLength: number
-  type: 'insight' | 'welcome'
+  type: 'insight' | 'welcome' | 'question' | 'answer'
 }
 
 
@@ -52,6 +52,8 @@ const emit = defineEmits<Emits>()
 const copiedStates = ref<Record<string, boolean>>({})
 const insightsContainer = ref<HTMLElement | null>(null)
 const isCompactMode = ref(false)
+const questionInput = ref('')
+const isAskingQuestion = ref(false)
 
 
 
@@ -60,6 +62,19 @@ const handleToggleLive = () => emit('toggle-live')
 const handleToggleCompact = () => {
   isCompactMode.value = !isCompactMode.value
   emit('toggle-compact')
+}
+
+const handleAskQuestion = () => {
+  if (!questionInput.value.trim() || isAskingQuestion.value) return
+  
+  isAskingQuestion.value = true
+  emit('ai-query', questionInput.value.trim())
+  
+  // Clear input after sending
+  setTimeout(() => {
+    questionInput.value = ''
+    isAskingQuestion.value = false
+  }, 500)
 }
 
 
@@ -152,6 +167,25 @@ const statusText = computed(() => {
         </button>
       </div>
       
+      <!-- Question Input Bar -->
+      <div v-if="isActive" class="question-bar">
+        <input
+          v-model="questionInput"
+          @keyup.enter="handleAskQuestion"
+          type="text"
+          placeholder="Ask a specific question about this conversation..."
+          class="question-input"
+          :disabled="isAskingQuestion"
+        />
+        <button 
+          @click="handleAskQuestion"
+          class="ask-button"
+          :disabled="!questionInput.trim() || isAskingQuestion"
+        >
+          <BoltIcon class="w-4 h-4" />
+        </button>
+      </div>
+      
       <!-- Chat-like Insights Feed -->
       <div class="insights-feed">
         <div ref="insightsContainer" class="insights-container">
@@ -161,11 +195,19 @@ const statusText = computed(() => {
               v-for="insight in insights" 
               :key="insight.id"
               class="insight-message"
-              :class="{ 'welcome-message': insight.type === 'welcome' }"
+              :class="{ 
+                'welcome-message': insight.type === 'welcome',
+                'question-message': insight.type === 'question',
+                'answer-message': insight.type === 'answer'
+              }"
             >
               <div class="message-header">
                 <div class="message-icon">
-                  <SparklesIcon class="w-3 h-3 text-orange-400" />
+                  <SparklesIcon v-if="insight.type === 'insight' || insight.type === 'welcome'" class="w-3 h-3 text-orange-400" />
+                  <BoltIcon v-else-if="insight.type === 'answer'" class="w-3 h-3 text-blue-400" />
+                  <component v-else :is="insight.type === 'question' ? 'span' : SparklesIcon" class="w-3 h-3 text-gray-400">
+                    {{ insight.type === 'question' ? 'Q:' : '' }}
+                  </component>
                 </div>
                 <span class="message-time">{{ formatTimestamp(insight.timestamp) }}</span>
                 <button 
@@ -347,6 +389,42 @@ const statusText = computed(() => {
 
 .insight-message.welcome-message {
   @apply bg-orange-500/10 border-orange-500/30;
+}
+
+.insight-message.question-message {
+  @apply bg-gray-500/10 border-gray-500/30;
+  @apply ml-4;
+}
+
+.insight-message.answer-message {
+  @apply bg-blue-500/10 border-blue-500/30;
+}
+
+/* Question Input Bar Styles */
+.question-bar {
+  @apply flex gap-2 px-4 py-3 border-b border-white/10;
+  @apply bg-white/[0.02];
+}
+
+.question-input {
+  @apply flex-1 px-3 py-2 text-sm rounded-lg;
+  @apply bg-white/[0.05] border border-white/10;
+  @apply text-white/90 placeholder-white/30;
+  @apply focus:outline-none focus:border-orange-500/50 focus:bg-white/[0.08];
+  @apply transition-all duration-200;
+}
+
+.question-input:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+.ask-button {
+  @apply px-3 py-2 rounded-lg;
+  @apply bg-orange-500/20 hover:bg-orange-500/30;
+  @apply text-orange-400 hover:text-orange-300;
+  @apply border border-orange-500/30 hover:border-orange-500/50;
+  @apply transition-all duration-200;
+  @apply disabled:opacity-50 disabled:cursor-not-allowed;
 }
 
 .message-header {

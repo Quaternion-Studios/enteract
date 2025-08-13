@@ -23,7 +23,7 @@ export interface ConversationInsight {
   text: string
   timestamp: number
   contextLength: number
-  type: 'insight' | 'welcome'
+  type: 'insight' | 'welcome' | 'question' | 'answer'
 }
 
 export interface ConversationSession {

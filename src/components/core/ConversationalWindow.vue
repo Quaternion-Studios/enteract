@@ -409,7 +409,31 @@ const handleDeleteConversation = async (id: string) => {
 
 const handleAIQuery = async (query: string) => {
   const currentMessages = conversationStore.currentMessages || []
-  await queryAI(query, currentMessages)
+  
+  // First, save the question as an insight
+  const questionInsight = {
+    id: `question-${Date.now()}`,
+    text: query,
+    timestamp: Date.now(),
+    contextLength: currentMessages.length,
+    type: 'question' as const
+  }
+  await conversationStore.addInsight(questionInsight)
+  
+  // Get AI response
+  const response = await queryAI(query, currentMessages)
+  
+  // Save the answer as an insight
+  if (response) {
+    const answerInsight = {
+      id: `answer-${Date.now()}`,
+      text: response,
+      timestamp: Date.now(),
+      contextLength: currentMessages.length,
+      type: 'answer' as const
+    }
+    await conversationStore.addInsight(answerInsight)
+  }
 }
 
 
