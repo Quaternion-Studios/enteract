@@ -63,6 +63,7 @@ const showExportControls = ref(false)
 // Sidebar and panel states
 const showConversationSidebar = ref(false)
 const showLiveAI = ref(false)
+const isLiveAIFullScreen = ref(false)
 
 // Speech transcription
 const {
@@ -417,10 +418,18 @@ const toggleLiveAI = () => {
   if (showLiveAI.value) {
     // If already open, just close it
     showLiveAI.value = false
+    isLiveAIFullScreen.value = false
   } else {
     // Close other drawers first, then open Live AI
     showLiveAI.value = true
+    // Start in fullscreen mode when first opened
+    isLiveAIFullScreen.value = true
   }
+}
+
+const handleLiveAIToggleCompact = () => {
+  // Toggle between fullscreen and compact mode
+  isLiveAIFullScreen.value = !isLiveAIFullScreen.value
 }
 
 const toggleLiveAIActive = async () => {
@@ -610,11 +619,11 @@ const formatSessionDuration = () => {
           :ai-response="aiResponse"
           :ai-error="aiError"
           :message-count="messages.length"
-          :full-screen="isLiveAIActive"
+          :full-screen="isLiveAIFullScreen"
           @close="showLiveAI = false"
           @toggle-live="toggleLiveAIActive"
           @ai-query="handleAIQuery"
-          @toggle-compact="() => {}"
+          @toggle-compact="handleLiveAIToggleCompact"
         />
       </div>
     </div>

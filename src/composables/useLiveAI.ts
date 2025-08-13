@@ -1,6 +1,7 @@
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { useConversationStore } from '../stores/conversation'
 
 export interface LiveAISession {
   id: string
@@ -25,13 +26,17 @@ export interface InsightItem {
 }
 
 export function useLiveAI() {
+  const conversationStore = useConversationStore()
+  
   const isActive = ref(false)
   const sessionId = ref<string | null>(null)
   const response = ref('')
-  const insights = ref<InsightItem[]>([])
   const isProcessing = ref(false)
   const error = ref<string | null>(null)
   const isAnalyzing = ref(false)
+  
+  // Get insights from the current conversation session
+  const insights = computed(() => conversationStore.currentSession?.insights || [])
   
   let streamListener: any = null
   let analysisTimeout: number | null = null
@@ -50,7 +55,7 @@ export function useLiveAI() {
       sessionId.value = newSessionId
       
       // Set up streaming listener for live AI responses
-      streamListener = await listen(`ollama-stream-${newSessionId}`, (event: any) => {
+      streamListener = await listen(`ollama-stream-${newSessionId}`, async (event: any) => {
         const data = event.payload
         
         if (data.type === 'start') {
@@ -58,14 +63,14 @@ export function useLiveAI() {
           isProcessing.value = true
           response.value = ''
           // Clear old insights when starting fresh analysis
-          insights.value = []
+          // Insights are now managed by the conversation store
         } else if (data.type === 'chunk') {
           response.value += data.text
         } else if (data.type === 'complete') {
           console.log('✅ Live AI streaming completed')
           isProcessing.value = false
           
-          // Add the completed response to insights list
+          // Add the completed response to conversation store
           if (response.value.trim()) {
             const insight: InsightItem = {
               id: `insight-${Date.now()}`,
@@ -75,13 +80,8 @@ export function useLiveAI() {
               type: 'insight'
             }
             
-            // Add to insights array (don't replace, accumulate)
-            insights.value.push(insight)
-            
-            // Keep only last 20 insights to prevent excessive memory usage while preserving conversation history
-            if (insights.value.length > 20) {
-              insights.value = insights.value.slice(-20)
-            }
+            // Save to conversation store
+            await conversationStore.addInsight(insight)
           }
         } else if (data.type === 'error') {
           console.error('❌ Live AI streaming error:', data.error)
@@ -93,15 +93,20 @@ export function useLiveAI() {
       isActive.value = true
       console.log('🚀 Live AI session started:', newSessionId)
       
-      // Initial welcome message
-      const welcomeInsight: InsightItem = {
-        id: 'welcome',
-        text: "AI Conversation Coach is active. I'll provide real-time insights and suggestions to help you navigate important conversations more effectively.",
-        timestamp: Date.now(),
-        contextLength: 0,
-        type: 'welcome'
+      // Load existing insights for this conversation
+      await conversationStore.loadCurrentSessionInsights()
+      
+      // Add welcome message if this is a new conversation with no insights
+      if (insights.value.length === 0) {
+        const welcomeInsight: InsightItem = {
+          id: 'welcome',
+          text: "AI Conversation Coach is active. I'll provide real-time insights and suggestions to help you navigate important conversations more effectively.",
+          timestamp: Date.now(),
+          contextLength: 0,
+          type: 'welcome'
+        }
+        await conversationStore.addInsight(welcomeInsight)
       }
-      insights.value = [welcomeInsight]
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to start Live AI'
       console.error('Failed to start Live AI:', err)
@@ -124,7 +129,7 @@ export function useLiveAI() {
       
       isActive.value = false
       response.value = ''
-      insights.value = []
+      // Insights remain in the conversation store
       sessionId.value = null
       
       // Clear any pending analysis
@@ -250,7 +255,7 @@ export function useLiveAI() {
     isActive.value = false
     sessionId.value = null
     response.value = ''
-    insights.value = []
+    // Insights remain in the conversation store
     isProcessing.value = false
     error.value = null
     lastAnalysisTime = 0

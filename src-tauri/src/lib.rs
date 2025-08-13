@@ -44,7 +44,8 @@ use data_store::{
     save_chat_sessions, load_chat_sessions, save_conversations, load_conversations, 
     delete_conversation, clear_all_conversations, restore_from_backup, list_backups,
     save_conversation_message, batch_save_conversation_messages, 
-    update_conversation_message, delete_conversation_message, ping_backend
+    update_conversation_message, delete_conversation_message, ping_backend,
+    save_conversation_insight, get_conversation_insights
 };
 
 // Import new audio loopback commands
@@ -171,7 +172,11 @@ pub fn run() {
             batch_save_conversation_messages,
             update_conversation_message,
             delete_conversation_message,
-            ping_backend
+            ping_backend,
+            
+            // Conversation insights
+            save_conversation_insight,
+            get_conversation_insights
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

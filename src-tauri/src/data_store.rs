@@ -120,6 +120,17 @@ pub struct ConversationMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationInsight {
+    pub id: String,
+    pub text: String,
+    pub timestamp: i64,
+    #[serde(rename = "contextLength")]
+    pub context_length: i32,
+    #[serde(rename = "type")]
+    pub insight_type: String, // 'insight' | 'welcome'
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationSession {
     pub id: String,
     pub name: String,
@@ -130,6 +141,7 @@ pub struct ConversationSession {
     pub messages: Vec<ConversationMessage>,
     #[serde(rename = "isActive")]
     pub is_active: bool,
+    pub insights: Vec<ConversationInsight>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -695,6 +707,72 @@ pub fn delete_conversation_message(
         .map_err(|e| format!("Failed to rename temporary file: {}", e))?;
     
     Ok(())
+}
+
+#[tauri::command]
+pub fn save_conversation_insight(
+    app_handle: AppHandle,
+    session_id: String,
+    insight: ConversationInsight,
+) -> Result<(), String> {
+    let file_path = get_conversations_file_path(&app_handle)?;
+    
+    let mut conversations = if file_path.exists() {
+        let content = fs::read_to_string(&file_path)
+            .map_err(|e| format!("Failed to read conversations file: {}", e))?;
+        
+        if content.trim().is_empty() {
+            LoadConversationsResponse { conversations: vec![] }
+        } else {
+            serde_json::from_str::<LoadConversationsResponse>(&content)
+                .map_err(|e| format!("Failed to parse conversations file: {}", e))?
+        }
+    } else {
+        LoadConversationsResponse { conversations: vec![] }
+    };
+    
+    // Find the conversation and add the insight
+    if let Some(conversation) = conversations.conversations.iter_mut().find(|c| c.id == session_id) {
+        conversation.insights.push(insight);
+        
+        // Save back to file
+        let updated_payload = SaveConversationsPayload {
+            conversations: conversations.conversations,
+        };
+        save_conversations(app_handle, updated_payload)?;
+    } else {
+        return Err(format!("Conversation with id {} not found", session_id));
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_conversation_insights(
+    app_handle: AppHandle,
+    session_id: String,
+) -> Result<Vec<ConversationInsight>, String> {
+    let file_path = get_conversations_file_path(&app_handle)?;
+    
+    if !file_path.exists() {
+        return Ok(vec![]);
+    }
+    
+    let content = fs::read_to_string(&file_path)
+        .map_err(|e| format!("Failed to read conversations file: {}", e))?;
+    
+    if content.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    
+    let conversations: LoadConversationsResponse = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse conversations file: {}", e))?;
+    
+    if let Some(conversation) = conversations.conversations.iter().find(|c| c.id == session_id) {
+        Ok(conversation.insights.clone())
+    } else {
+        Ok(vec![])
+    }
 }
 
 #[tauri::command]
