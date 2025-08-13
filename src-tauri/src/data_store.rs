@@ -141,6 +141,7 @@ pub struct ConversationSession {
     pub messages: Vec<ConversationMessage>,
     #[serde(rename = "isActive")]
     pub is_active: bool,
+    #[serde(default)]
     pub insights: Vec<ConversationInsight>,
 }
 
@@ -350,8 +351,40 @@ pub fn load_conversations(app_handle: AppHandle) -> Result<LoadConversationsResp
     let file_content = fs::read_to_string(&file_path)
         .map_err(|e| format!("Failed to read conversations file: {}", e))?;
 
-    let conversations: Vec<ConversationSession> = serde_json::from_str(&file_content)
-        .map_err(|e| format!("Failed to deserialize conversations: {}", e))?;
+    // Try to deserialize with current structure first
+    let mut conversations: Vec<ConversationSession> = match serde_json::from_str(&file_content) {
+        Ok(convs) => convs,
+        Err(_) => {
+            // If deserialization fails, try to parse as legacy format and migrate
+            println!("Attempting to migrate legacy conversation format...");
+            let legacy_conversations: Vec<serde_json::Value> = serde_json::from_str(&file_content)
+                .map_err(|e| format!("Failed to deserialize conversations as legacy format: {}", e))?;
+            
+            // Migrate legacy conversations to include insights field
+            let migrated_conversations: Result<Vec<ConversationSession>, _> = legacy_conversations
+                .into_iter()
+                .map(|mut conv| {
+                    // Add insights field if missing
+                    if conv.get("insights").is_none() {
+                        conv["insights"] = serde_json::json!([]);
+                    }
+                    serde_json::from_value(conv)
+                })
+                .collect();
+            
+            let migrated = migrated_conversations
+                .map_err(|e| format!("Failed to migrate legacy conversations: {}", e))?;
+            
+            // Save the migrated conversations back to file
+            let migrated_payload = SaveConversationsPayload {
+                conversations: migrated.clone(),
+            };
+            save_conversations(app_handle.clone(), migrated_payload)?;
+            println!("Successfully migrated {} conversations to new format", migrated.len());
+            
+            migrated
+        }
+    };
 
     println!("Loaded {} conversations from: {:?}", conversations.len(), file_path);
     Ok(LoadConversationsResponse { conversations })

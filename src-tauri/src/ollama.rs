@@ -776,10 +776,10 @@ async fn generate_agent_response_stream(
     let gpu_layers = detect_gpu_layers();
     
     let options = if agent_type == "conversational_ai" {
-        // Keep live suggestions extremely fast and short
+        // Balanced for comprehensive but focused conversation coaching
         let mut opts = serde_json::json!({
-            "num_predict": 64,
-            "temperature": 0.6,
+            "num_predict": 200,
+            "temperature": 0.7,
             "top_p": 0.9,
             "repeat_penalty": 1.05
         });

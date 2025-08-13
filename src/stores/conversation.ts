@@ -54,8 +54,14 @@ export const useConversationStore = defineStore('conversation', () => {
     try {
       console.log('📁 Store: Attempting to load conversations from backend...')
       const response = await invoke<{conversations: ConversationSession[]}>('load_conversations')
-      sessions.value = response.conversations
-      console.log(`📁 Store: Successfully loaded ${sessions.value.length} conversation sessions from backend:`, sessions.value.map(s => ({ id: s.id, name: s.name, messageCount: s.messages.length })))
+      
+      // Migrate old sessions that don't have insights field
+      sessions.value = response.conversations.map(session => ({
+        ...session,
+        insights: session.insights || [] // Add empty insights array if missing
+      }))
+      
+      console.log(`📁 Store: Successfully loaded ${sessions.value.length} conversation sessions from backend:`, sessions.value.map(s => ({ id: s.id, name: s.name, messageCount: s.messages.length, insightCount: s.insights?.length || 0 })))
     } catch (error) {
       console.error('📁 Store: Failed to load conversation sessions from backend:', error)
       // Fallback to localStorage for migration
@@ -63,7 +69,11 @@ export const useConversationStore = defineStore('conversation', () => {
         const stored = localStorage.getItem(STORAGE_KEY)
         if (stored) {
           const parsed = JSON.parse(stored)
-          sessions.value = parsed
+          // Migrate old sessions that don't have insights field
+          sessions.value = parsed.map((session: any) => ({
+            ...session,
+            insights: session.insights || [] // Add empty insights array if missing
+          }))
           console.log(`📁 Store: Migrated ${parsed.length} conversation sessions from localStorage`)
           // Save to backend and clear localStorage
           await saveSessions()
