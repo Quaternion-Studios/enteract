@@ -22,6 +22,7 @@ mod search_service; // Tantivy search service
 mod chunking_service; // Enhanced text chunking service
 mod enhanced_rag_system; // Enhanced RAG system
 mod enhanced_rag_commands; // Enhanced RAG command handlers
+mod mcp; // MCP module for multi-command processing
 
 // Re-export the commands from modules
 use transparency::{set_window_transparency, emergency_restore_window, toggle_transparency};
@@ -42,7 +43,10 @@ use ollama::{
     generate_ollama_response, generate_ollama_response_stream, get_ollama_model_info,
     generate_enteract_agent_response, generate_vision_analysis, generate_deep_research,
     generate_conversational_ai, generate_coding_agent_response, cancel_ai_response,
-    get_gpu_acceleration_status
+    get_gpu_acceleration_status,
+
+    // MCP enhanced commands
+    generate_mcp_enabled_response, create_mcp_session_for_ai, get_mcp_session_for_ai
 };
 use screenshot::{capture_screenshot, capture_screenshot_area};
 use file_handler::{
@@ -79,6 +83,14 @@ use enhanced_rag_commands::{
     generate_enhanced_embeddings, clear_enhanced_embedding_cache, update_enhanced_rag_settings,
     get_enhanced_rag_settings, get_enhanced_storage_stats, get_embedding_status,
     validate_enhanced_file_upload
+};
+
+// Import MCP commands
+use mcp::{
+    start_mcp_session, end_mcp_session, get_mcp_session_info, list_mcp_tools,
+    execute_mcp_tool, respond_to_mcp_approval, get_mcp_session_logs, 
+    list_active_mcp_sessions, create_mcp_session_manager, get_mcp_tool_schema,
+    get_mcp_session_status, MCPSessionManager
 };
 
 #[tauri::command]
@@ -124,6 +136,10 @@ pub fn run() {
                     }
                 }
             });
+
+            // Initialize MCP session manager
+            let mcp_sessions = create_mcp_session_manager();
+            app.manage(mcp_sessions);
             
             Ok(())
         })
@@ -248,7 +264,25 @@ pub fn run() {
             get_enhanced_rag_settings,
             get_enhanced_storage_stats,
             get_embedding_status,
-            validate_enhanced_file_upload
+            validate_enhanced_file_upload,
+
+            // MCP commands
+            start_mcp_session,
+            end_mcp_session,
+            get_mcp_session_info,
+            list_mcp_tools,
+            execute_mcp_tool,
+            respond_to_mcp_approval,
+            get_mcp_session_logs,
+            list_active_mcp_sessions,
+            get_mcp_tool_schema,
+            get_mcp_session_status,
+            
+            // Enhanced AI commands with MCP
+            generate_mcp_enabled_response,
+            create_mcp_session_for_ai,
+            get_mcp_session_for_ai,
+
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

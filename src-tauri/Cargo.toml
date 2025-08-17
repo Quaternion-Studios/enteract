@@ -1,8 +1,8 @@
 [package]
 name = "enteract"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["Rohan Singh"]
+description = "Local AI Agents by Quaternion Studios"
+authors = ["Rohan Singh", "Chase Allen"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -25,6 +25,7 @@ serde_json = "1"
 lazy_static = "1.4"
 tokio = { version = "1", features = ["full"] }
 rand = "0.8"
+async-trait = "0.1.77"
 
 # Speech transcription dependencies (for wake word detection)
 whisper-rs = "0.12"
@@ -51,10 +52,15 @@ rusqlite = { version = "0.31", features = ["bundled", "blob"] }
 tantivy = { version = "0.22", features = ["mmap"] }
 tiktoken-rs = "0.5"
 
+# MCP system dependencies
+rmcp = { version = "0.2.0", features = ["server", "client"] }
+enigo = "0.2"
+
 # Additional dependencies for enhanced error handling
 thiserror = { version = "1.0", optional = true }
-log = { version = "0.4", optional = true }
+log = "0.4.21"
 env_logger = { version = "0.10", optional = true }
+regex = "1.10.3"
 
 # Platform-specific dependencies for transparency
 [target.'cfg(windows)'.dependencies]
@@ -64,6 +70,17 @@ windows = { version = "0.52", features = [
     "Win32_Graphics",
     "Win32_Graphics_Gdi"
 ] }
+winapi = { version = "0.3", features = [
+    "winuser",
+    "windef",
+    "minwindef",
+    "libloaderapi",
+    "errhandlingapi",
+    "processthreadsapi",
+    "winnt",
+    "handleapi"
+] }
+
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

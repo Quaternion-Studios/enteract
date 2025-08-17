@@ -18,6 +18,7 @@ use crate::system_prompts::{
     CODING_AGENT_PROMPT
 };
 use crate::system_info::get_gpu_info;
+use regex;
 
 // Shared HTTP client for better connection pooling and memory efficiency
 lazy_static! {
@@ -165,7 +166,7 @@ impl StreamState {
         if !self.last_chunk_text.is_empty() && self.last_chunk_text == chunk_text {
             self.repeat_count += 1;
             println!("⚠️ Consecutive repeat detected: '{}' (count: {})", 
-                    chunk_text.chars().take(50).collect::<String>(), self.repeat_count);
+                     chunk_text.chars().take(50).collect::<String>(), self.repeat_count);
             
             // More aggressive detection for very short or UI-related chunks
             if chunk_text.trim().len() <= 20 && self.repeat_count > 3 {
@@ -243,7 +244,7 @@ impl Default for StreamConfig {
             max_chunk_gap: Duration::from_secs(30),       // 30 seconds between chunks
             chunk_timeout: Duration::from_secs(10),       // 10 seconds per chunk read
             max_consecutive_repeats: 5,                   // Max 5 consecutive identical chunks
-            max_consecutive_empty_chunks: 25,             // Max 25 consecutive empty chunks (increased)
+            max_consecutive_empty_chunks: 25,              // Max 25 consecutive empty chunks (increased)
         }
     }
 }
@@ -515,7 +516,7 @@ async fn stream_ollama_response_enhanced(
                                 cleanup_session(&session_id);
                                 
                                 return Ok(());
-                            }
+                                }
                             }
 
                             // Skip empty chunks to reduce UI overhead but still emit important ones
@@ -535,7 +536,7 @@ async fn stream_ollama_response_enhanced(
 
                             if response_chunk.done {
                                 println!("✅ Agent streaming completed for session: {} (chunks: {}, repeats: {})", 
-                                        session_id, state.chunk_count, state.repeat_count);
+                                         session_id, state.chunk_count, state.repeat_count);
                                 emit_complete(&app_handle, &session_id).await;
                                 cleanup_session(&session_id);
                                 return Ok(());
@@ -967,7 +968,7 @@ async fn generate_agent_response_stream(
         max_chunk_gap: Duration::from_secs(20),       // 20 seconds between chunks
         chunk_timeout: Duration::from_secs(8),        // 8 seconds per chunk
         max_consecutive_repeats: 3,                   // Max 3 consecutive repeats for agents
-        max_consecutive_empty_chunks: 30,             // Max 30 consecutive empty chunks (increased)
+        max_consecutive_empty_chunks: 30,               // Max 30 consecutive empty chunks (increased)
     };
 
     
@@ -1039,7 +1040,7 @@ async fn generate_agent_response_stream_with_image(
         max_chunk_gap: Duration::from_secs(25),       // 25 seconds between chunks
         chunk_timeout: Duration::from_secs(10),       // 10 seconds per chunk
         max_consecutive_repeats: 4,                   // Max 4 consecutive repeats for vision
-        max_consecutive_empty_chunks: 25,             // Max 25 consecutive empty chunks (increased)
+        max_consecutive_empty_chunks: 25,              // Max 25 consecutive empty chunks (increased)
     };
 
     let result = stream_ollama_response_enhanced(app_handle, url, request, session_id.clone(), vision_config).await;
@@ -1128,4 +1129,378 @@ pub async fn generate_with_custom_timeouts(
     };
     
     stream_ollama_response_enhanced(app_handle, url, request, session_id, custom_config).await
+}
+
+
+
+
+
+// ADDED MCP FUNCTIONALITY
+
+
+// Add these imports to the top of your ollama.rs file
+use crate::mcp::commands::MCPSessionManager;
+use crate::mcp::types::MCPSessionConfig;
+
+// Add this new command for MCP-enabled AI responses
+#[tauri::command]
+pub async fn generate_mcp_enabled_response(
+    app_handle: AppHandle,
+    model: String,
+    prompt: String,
+    context: Option<Vec<ChatContextMessage>>,
+    session_id: String,
+    mcp_session_id: Option<String>,
+    mcp_sessions: tauri::State<'_, MCPSessionManager>,
+) -> Result<(), String> {
+    let url = format!("{}/api/generate", OLLAMA_BASE_URL);
+    
+    // Build the enhanced system prompt that includes MCP capabilities
+    let system_prompt = build_mcp_system_prompt(mcp_session_id.clone(), &mcp_sessions).await?;
+    
+    // Build full prompt with context and MCP capabilities
+    let full_prompt = if let Some(mcp_id) = &mcp_session_id {
+        format!("{}{}Context: You have access to computer control tools through MCP session {}. You can click, type, scroll, take screenshots, and more. Use tools when helpful to assist the user.\n\nUser Request: {}", 
+                system_prompt, 
+                if let Some(ctx) = context { build_context_string(ctx) } else { String::new() },
+                mcp_id,
+                prompt)
+    } else {
+        build_prompt_with_context(prompt, context)
+    };
+    
+    // Detect GPU and set acceleration options
+    let gpu_layers = detect_gpu_layers();
+    let options = if gpu_layers > 0 {
+        Some(serde_json::json!({
+            "num_gpu": gpu_layers,
+            "num_thread": 4,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "repeat_penalty": 1.1
+        }))
+    } else {
+        Some(serde_json::json!({
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "repeat_penalty": 1.1
+        }))
+    };
+    
+    let request = GenerateRequest {
+        model: model.clone(),
+        prompt: full_prompt,
+        stream: Some(true),
+        context: None,
+        images: None,
+        system: Some(system_prompt),
+        options,
+    };
+    
+    println!("🤖 Starting MCP-enabled streaming for session: {} (MCP: {:?})", session_id, mcp_session_id);
+    
+    // Emit start event
+    if let Err(e) = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
+        "type": "start",
+        "model": model,
+        "mcp_enabled": mcp_session_id.is_some(),
+        "mcp_session_id": mcp_session_id
+    })) {
+        return Err(format!("Failed to emit start event: {}", e));
+    }
+    
+    // Use enhanced streaming with MCP tool execution
+    stream_ollama_response_with_mcp(app_handle, url, request, session_id, mcp_session_id, mcp_sessions).await
+}
+
+// Helper function to build MCP-aware system prompt
+async fn build_mcp_system_prompt(
+    mcp_session_id: Option<String>,
+    mcp_sessions: &tauri::State<'_, MCPSessionManager>,
+) -> Result<String, String> {
+    if let Some(session_id) = mcp_session_id {
+        let sessions_guard = mcp_sessions.lock().await;
+        if let Some(session) = sessions_guard.get(&session_id) {
+            let tools = session.get_available_tools().await;
+            
+            let mut tool_descriptions = String::new();
+            tool_descriptions.push_str("Available computer control tools:\n");
+            
+            for tool in &tools {
+                tool_descriptions.push_str(&format!(
+                    "- {}: {} (Risk: {:?})\n",
+                    tool.name,
+                    tool.description,
+                    tool.danger_level
+                ));
+            }
+            
+            return Ok(format!(
+                "You are an AI assistant with computer control capabilities. {}
+
+When you need to use computer control tools, format your requests as:
+TOOL_CALL: tool_name {{\"param1\": \"value1\", \"param2\": \"value2\"}}
+
+Available tool calls:
+- TOOL_CALL: click {{\"x\": 100, \"y\": 200}} - Click at coordinates
+- TOOL_CALL: type {{\"text\": \"hello world\"}} - Type text
+- TOOL_CALL: scroll {{\"direction\": \"up\", \"amount\": 3}} - Scroll
+- TOOL_CALL: key_press {{\"key\": \"Enter\"}} - Press a key
+- TOOL_CALL: take_screenshot {{}} - Take a screenshot
+- TOOL_CALL: get_cursor_position {{}} - Get cursor position
+- TOOL_CALL: get_screen_info {{}} - Get screen information
+
+Always explain what you're doing and ask for permission for risky actions.",
+                tool_descriptions
+            ));
+        }
+    }
+    
+    Ok("You are a helpful AI assistant.".to_string())
+}
+
+// Enhanced streaming function that can execute MCP tools
+async fn stream_ollama_response_with_mcp(
+    app_handle: AppHandle,
+    url: String,
+    request: GenerateRequest,
+    session_id: String,
+    mcp_session_id: Option<String>,
+    mcp_sessions: tauri::State<'_, MCPSessionManager>,
+) -> Result<(), String> {
+    // Register the session as active
+    {
+        let mut sessions = ACTIVE_SESSIONS.lock().unwrap();
+        sessions.insert(session_id.clone(), false);
+    }
+
+    let client = Arc::clone(&HTTP_CLIENT);
+    
+    // Make request with timeout
+    let response = timeout(Duration::from_secs(30), client.post(&url).json(&request).send())
+        .await
+        .map_err(|_| "Request timeout".to_string())?
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        let error_msg = format!("Generation failed: {}", error_text);
+        
+        emit_error(&app_handle, &session_id, &error_msg).await;
+        cleanup_session(&session_id);
+        return Err(error_msg);
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = Vec::new();
+    let mut state = StreamState::new();
+    let mut accumulated_response = String::new();
+
+    loop {
+        // Check for cancellation
+        if is_session_cancelled(&session_id) {
+            println!("🛑 Session cancelled: {}", session_id);
+            cleanup_session(&session_id);
+            return Ok(());
+        }
+
+        // Check timeouts and patterns
+        if let Some(timeout_reason) = state.should_timeout(Duration::from_secs(300), Duration::from_secs(30)) {
+            emit_timeout(&app_handle, &session_id, &timeout_reason).await;
+            emit_complete(&app_handle, &session_id).await;
+            cleanup_session(&session_id);
+            return Err(timeout_reason);
+        }
+
+        // Read next chunk
+        let chunk_result = timeout(Duration::from_secs(10), stream.next()).await;
+        
+        let chunk_result = match chunk_result {
+            Ok(Some(chunk_result)) => chunk_result,
+            Ok(None) => {
+                // Process any remaining accumulated response for tool calls
+                if !accumulated_response.is_empty() && mcp_session_id.is_some() {
+                    process_tool_calls(&accumulated_response, &mcp_session_id.unwrap(), &mcp_sessions, &app_handle, &session_id).await;
+                }
+                
+                emit_complete(&app_handle, &session_id).await;
+                cleanup_session(&session_id);
+                return Ok(());
+            }
+            Err(_) => {
+                emit_timeout(&app_handle, &session_id, "Chunk read timeout").await;
+                emit_complete(&app_handle, &session_id).await;
+                cleanup_session(&session_id);
+                return Err("Chunk read timeout".to_string());
+            }
+        };
+
+        match chunk_result {
+            Ok(chunk) => {
+                buffer.extend_from_slice(&chunk);
+
+                while let Some(newline_pos) = buffer.iter().position(|&b| b == b'\n') {
+                    let line = buffer.drain(..=newline_pos).collect::<Vec<u8>>();
+                    let line_str = String::from_utf8_lossy(&line[..line.len()-1]);
+
+                    if line_str.trim().is_empty() {
+                        continue;
+                    }
+
+                    match serde_json::from_str::<GenerateResponse>(&line_str) {
+                        Ok(response_chunk) => {
+                            match state.update_chunk(&response_chunk.response) {
+                                ChunkResult::Continue => {},
+                                ChunkResult::Exit(reason) => {
+                                    emit_termination(&app_handle, &session_id, &reason, state.chunk_count, state.repeat_count).await;
+                                    emit_complete(&app_handle, &session_id).await;
+                                    cleanup_session(&session_id);
+                                    return Ok(());
+                                }
+                            }
+
+                            // Accumulate response for tool call detection
+                            accumulated_response.push_str(&response_chunk.response);
+
+                            // Check for tool calls in the accumulated response
+                            if mcp_session_id.is_some() && accumulated_response.contains("TOOL_CALL:") {
+                                // Process tool calls and get updated response
+                                let processed_response = process_tool_calls(&accumulated_response, &mcp_session_id.as_ref().unwrap(), &mcp_sessions, &app_handle, &session_id).await;
+                                if let Some(updated_response) = processed_response {
+                                    accumulated_response = updated_response;
+                                }
+                            }
+
+                            if !response_chunk.response.is_empty() || response_chunk.done {
+                                if let Err(e) = app_handle.emit(&format!("ollama-stream-{}", session_id), serde_json::json!({
+                                    "type": "chunk",
+                                    "text": response_chunk.response,
+                                    "done": response_chunk.done,
+                                    "mcp_enabled": mcp_session_id.is_some()
+                                })) {
+                                    eprintln!("Failed to emit chunk event: {}", e);
+                                }
+                            }
+
+                            if response_chunk.done {
+                                emit_complete(&app_handle, &session_id).await;
+                                cleanup_session(&session_id);
+                                return Ok(());
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to parse streaming response: {} - Line: {}", e, line_str);
+                            continue;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                let error_msg = format!("Stream error: {}", e);
+                emit_error(&app_handle, &session_id, &error_msg).await;
+                cleanup_session(&session_id);
+                return Err(error_msg);
+            }
+        }
+    }
+}
+
+// Process tool calls found in AI response
+async fn process_tool_calls(
+    response_text: &str,
+    mcp_session_id: &str,
+    mcp_sessions: &tauri::State<'_, MCPSessionManager>,
+    app_handle: &AppHandle,
+    session_id: &str,
+) -> Option<String> {
+    let tool_call_pattern = regex::Regex::new(r"TOOL_CALL:\s*(\w+)\s*(\{[^}]*\})").ok()?;
+    
+    if let Some(captures) = tool_call_pattern.find(response_text) {
+        let tool_call_text = captures.as_str();
+        println!("🔧 Detected tool call: {}", tool_call_text);
+        
+        // Parse tool name and parameters
+        if let Some(caps) = tool_call_pattern.captures(tool_call_text) {
+            let tool_name = caps.get(1)?.as_str();
+            let params_str = caps.get(2)?.as_str();
+            
+            if let Ok(parameters) = serde_json::from_str::<serde_json::Value>(params_str) {
+                // Execute the tool via MCP
+                let sessions_guard = mcp_sessions.lock().await;
+                let session = sessions_guard.get(mcp_session_id)?;
+                
+                match session.execute_tool(tool_name, parameters).await {
+                    Ok(result) => {
+                        let result_text = if result.success {
+                            format!("✅ Tool executed successfully: {}", 
+                                    result.result.get("message").and_then(|m| m.as_str()).unwrap_or("Success"))
+                        } else {
+                            format!("❌ Tool execution failed: {}", 
+                                    result.error.as_deref().unwrap_or("Unknown error"))
+                        };
+                        
+                        // Emit tool execution result to frontend
+                        let _ = app_handle.emit(&format!("mcp-tool-result-{}", session_id), serde_json::json!({
+                            "tool_name": tool_name,
+                            "result": &result,
+                            "session_id": session_id
+                        }));
+                        
+                        // Replace the tool call with the result in the response
+                        let updated_response = response_text.replace(tool_call_text, &result_text);
+                        return Some(updated_response);
+                    }
+                    Err(e) => {
+                        let error_text = format!("❌ Tool execution error: {}", e);
+                        let updated_response = response_text.replace(tool_call_text, &error_text);
+                        return Some(updated_response);
+                    }
+                }
+            }
+        }
+    }
+    
+    None
+}
+
+// Helper function to build context string
+fn build_context_string(context: Vec<ChatContextMessage>) -> String {
+    let mut context_str = String::new();
+    for message in &context {
+        context_str.push_str(&format!("{}**: {}\n\n", 
+            message.role.chars().next().unwrap().to_uppercase().collect::<String>() + &message.role[1..],
+            message.content));
+    }
+    context_str
+}
+
+// Add MCP session management commands for the frontend
+#[tauri::command]
+pub async fn create_mcp_session_for_ai(
+    app_handle: AppHandle,
+    mcp_sessions: tauri::State<'_, MCPSessionManager>,
+) -> Result<String, String> {
+    let config = MCPSessionConfig {
+        require_approval: true,
+        session_timeout_seconds: 300,
+        enable_logging: true,
+        server_name: "enteract-ai-mcp".to_string(),
+        server_version: "1.0.0".to_string(),
+    };
+    
+    let session_info = crate::mcp::commands::start_mcp_session(
+        Some(config),
+        app_handle,
+        mcp_sessions,
+    ).await?;
+    
+    Ok(session_info.id)
+}
+
+#[tauri::command]
+pub async fn get_mcp_session_for_ai(
+    mcp_session_id: String,
+    mcp_sessions: tauri::State<'_, MCPSessionManager>,
+) -> Result<crate::mcp::types::MCPSessionInfo, String> {
+    crate::mcp::commands::get_mcp_session_info(mcp_session_id, mcp_sessions).await
 }
