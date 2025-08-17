@@ -62,11 +62,16 @@ const mentionStartPos = ref(-1)
 
 // Available agents for @ mentions
 const availableAgents = [
-  { id: 'enteract', name: '@enteract', description: 'General purpose AI assistant' },
+  { id: 'enteract', name: '@enteract', description: 'MCP computer use agent with tool access' },
   { id: 'coding', name: '@coding', description: 'Programming assistance and code review' },
   { id: 'research', name: '@research', description: 'Advanced research with step-by-step thinking' },
   { id: 'vision', name: '@vision', description: 'Visual content analysis' }
 ]
+
+// MCP mode detection - only highlight when actively typing @enteract
+const isMCPMode = computed(() => {
+  return chatMessage.value.trim().toLowerCase().startsWith('@enteract')
+})
 
 // Handle mention input: '@' for agent/model, '/' for documents
 const handleInput = (event: Event) => {
@@ -247,11 +252,22 @@ const sendMessageWithAgent = async () => {
     console.log(`📚 Sending message with ${selectedDocIds.length} selected documents for RAG context`)
   }
   
+  // Store current agent before clearing the form
+  const agentToUse = currentAgent.value
+  
   chatMessage.value = ''
   showMentionSuggestions.value = false
   showDocumentDropdown.value = false
   
-  await sendMessage(currentAgent.value, cleanedMessage || originalMessage, selectedDocIds)
+  // Reset to default agent unless the message explicitly mentioned an agent
+  const hasExplicitAgentMention = originalMessage.toLowerCase().match(/@(enteract|coding|research|vision)\b/)
+  if (!hasExplicitAgentMention) {
+    currentAgent.value = 'enteract'
+  }
+  
+  // For MCP commands, always pass the original message to preserve @enteract prefix
+  const messageToSend = originalMessage.toLowerCase().startsWith('@enteract') ? originalMessage : (cleanedMessage || originalMessage)
+  await sendMessage(agentToUse, messageToSend, selectedDocIds)
 }
 
 // Handle model and agent selection
@@ -757,9 +773,11 @@ onUnmounted(() => {
                 @input="handleInput"
                 @keydown="handleEnhancedKeydown"
                 class="chat-input"
-                placeholder="Ask any AI agent... (use @ to mention agents, / to add documents)"
+                :class="{ 'mcp-mode': isMCPMode }"
+                :placeholder="isMCPMode ? 'MCP Mode: Enter computer use command...' : 'Ask any AI agent... (use @ to mention agents, / to add documents)'"
                 type="text"
               />
+              
               
               <!-- @ Mention Suggestions -->
               <Transition name="mention-suggestions">
@@ -1305,6 +1323,13 @@ onUnmounted(() => {
 .chat-window-leave-to {
   opacity: 0;
   transform: translateY(-10px) scale(0.98);
+}
+
+/* MCP Mode Styles */
+.chat-input.mcp-mode {
+  border-color: rgba(249, 115, 22, 0.6) !important;
+  background: rgba(249, 115, 22, 0.1) !important;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.2) !important;
 }
 
 /* Scrollbar */

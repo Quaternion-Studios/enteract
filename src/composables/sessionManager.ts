@@ -26,7 +26,6 @@ export class SessionManager {
       if (!sharedChatState.currentChatId.value) return []
       const currentSession = sharedChatState.chatSessions.value.find(session => session.id === sharedChatState.currentChatId.value)
       const history = currentSession?.history || []
-      console.log(`🔍 [SHARED STATE] Current chat history computed: ${history.length} messages for chat ${sharedChatState.currentChatId.value}`)
       return history
     })
   }

@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event'
 import { SessionManager } from './sessionManager'
 import { ContextManager } from './contextManager'
 import { enhancedRagService } from '../services/enhancedRagService'
+import { MCPService } from './mcpService'
 
 let messageIdCounter = 1
 
@@ -13,6 +14,7 @@ export class AgentService {
 
   static init(scrollCallback: () => void) {
     AgentService.scrollChatToBottom = scrollCallback
+    MCPService.init(scrollCallback)
   }
 
   // Agent activation functions
@@ -115,6 +117,22 @@ export class AgentService {
 
   // Send message function
   static async sendMessage(userMessage: string, selectedModel: string | null, agentType: string = 'enteract', selectedDocumentIds: string[] = []) {
+    // Check if this is an explicit @enteract MCP command
+    const isExplicitMCP = userMessage.trim().toLowerCase().startsWith('@enteract')
+    
+    if (isExplicitMCP) {
+      console.log('🔧 Detected explicit @enteract MCP command, routing to MCP service')
+      
+      // Ensure we have an active chat session
+      const currentChatSession = SessionManager.getCurrentChatSession().value
+      if (!currentChatSession) {
+        SessionManager.createNewChat(selectedModel)
+      }
+      
+      await MCPService.processEnteractMessage(userMessage, selectedModel)
+      return
+    }
+
     // Ensure we have an active chat session
     const currentChatSession = SessionManager.getCurrentChatSession().value
     if (!currentChatSession) {

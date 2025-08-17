@@ -19,7 +19,6 @@ export class MarkdownRenderer {
   
   // Safe rendering with timeout protection
   static renderSafe(text: string): string {
-    console.log('🎨 Simple markdown render:', text.length, 'chars')
     const startTime = performance.now()
     
     try {
@@ -78,8 +77,11 @@ export class MarkdownRenderer {
         processed = processed.replace(inlineCodePlaceholder(index), html)
       })
       
+      // Only log if render takes more than 5ms (performance issue indicator)
       const renderTime = performance.now() - startTime
-      console.log(`⚡ Rendered in ${renderTime.toFixed(2)}ms`)
+      if (renderTime > 5) {
+        console.log(`⚡ Slow render: ${renderTime.toFixed(2)}ms for ${text.length} chars`)
+      }
       
       return processed
       
