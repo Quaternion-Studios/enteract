@@ -43,9 +43,11 @@ impl MCPSession {
         // Register new atomic OCR tools
         tools.insert("find_text".to_string(), Box::new(crate::mcp::tools::FindTextTool));
         tools.insert("click_at".to_string(), Box::new(crate::mcp::tools::ClickAtTool));
+        tools.insert("debug_ocr".to_string(), Box::new(crate::mcp::tools::DebugOcrTool));
         
         // Register compound tools (require approval)
         tools.insert("click_on_text".to_string(), Box::new(crate::mcp::tools::ClickOnTextTool));
+        tools.insert("click_and_type".to_string(), Box::new(crate::mcp::tools::ClickAndTypeTool));
         
         Self {
             id: session_id,

@@ -595,14 +595,164 @@ fn get_cursor_position() -> Result<(i32, i32), String> {
 }
 
 #[cfg(target_os = "windows")]
-async fn type_text(_text: &str, delay_ms: u64) -> Result<(), String> {
-    // Use Windows SendInput API for more reliable text input
-    // This is a simplified implementation
-    for _ch in _text.chars() {
-        // Convert character to virtual key and send input events
-        // This would need proper implementation with SendInput
-        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+async fn type_text(text: &str, delay_ms: u64) -> Result<(), String> {
+    use winapi::um::winuser::{SendInput, INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VkKeyScanA, MapVirtualKeyA, MAPVK_VK_TO_VSC};
+    use winapi::um::winuser::{KEYBDINPUT};
+    use std::mem;
+    
+    for ch in text.chars() {
+        unsafe {
+            // For Unicode characters, use KEYEVENTF_UNICODE
+            if ch as u32 > 127 {
+                // Unicode input
+                let mut inputs = [INPUT {
+                    type_: INPUT_KEYBOARD,
+                    u: mem::zeroed(),
+                }; 2];
+                
+                *inputs[0].u.ki_mut() = KEYBDINPUT {
+                    wVk: 0,
+                    wScan: ch as u16,
+                    dwFlags: KEYEVENTF_UNICODE,
+                    time: 0,
+                    dwExtraInfo: 0,
+                };
+                
+                *inputs[1].u.ki_mut() = KEYBDINPUT {
+                    wVk: 0,
+                    wScan: ch as u16,
+                    dwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                    time: 0,
+                    dwExtraInfo: 0,
+                };
+                
+                let result = SendInput(2, inputs.as_mut_ptr(), mem::size_of::<INPUT>() as i32);
+                if result != 2 {
+                    return Err(format!("Failed to send unicode input for character '{}'", ch));
+                }
+            } else {
+                // ASCII character - use virtual key code
+                let ascii_byte = ch as u8;
+                let vk_code = VkKeyScanA(ascii_byte as i8);
+                
+                if vk_code == -1 {
+                    // Character cannot be represented, try unicode method
+                    let mut inputs = [INPUT {
+                        type_: INPUT_KEYBOARD,
+                        u: mem::zeroed(),
+                    }; 2];
+                    
+                    *inputs[0].u.ki_mut() = KEYBDINPUT {
+                        wVk: 0,
+                        wScan: ch as u16,
+                        dwFlags: KEYEVENTF_UNICODE,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    };
+                    
+                    *inputs[1].u.ki_mut() = KEYBDINPUT {
+                        wVk: 0,
+                        wScan: ch as u16,
+                        dwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    };
+                    
+                    let result = SendInput(2, inputs.as_mut_ptr(), mem::size_of::<INPUT>() as i32);
+                    if result != 2 {
+                        return Err(format!("Failed to send unicode input for character '{}'", ch));
+                    }
+                } else {
+                    let virtual_key = (vk_code & 0xFF) as u16;
+                    let scan_code = MapVirtualKeyA(virtual_key as u32, MAPVK_VK_TO_VSC) as u16;
+                    
+                    // Check if shift is needed
+                    let shift_needed = (vk_code & 0x100) != 0;
+                    
+                    let mut inputs = Vec::new();
+                    
+                    // Press shift if needed
+                    if shift_needed {
+                        inputs.push(INPUT {
+                            type_: INPUT_KEYBOARD,
+                            u: {
+                                let mut input_union: winapi::um::winuser::INPUT_u = mem::zeroed();
+                                *input_union.ki_mut() = KEYBDINPUT {
+                                    wVk: 0x10, // VK_SHIFT
+                                    wScan: MapVirtualKeyA(0x10, MAPVK_VK_TO_VSC) as u16,
+                                    dwFlags: 0,
+                                    time: 0,
+                                    dwExtraInfo: 0,
+                                };
+                                input_union
+                            },
+                        });
+                    }
+                    
+                    // Press key
+                    inputs.push(INPUT {
+                        type_: INPUT_KEYBOARD,
+                        u: {
+                            let mut input_union: winapi::um::winuser::INPUT_u = mem::zeroed();
+                            *input_union.ki_mut() = KEYBDINPUT {
+                                wVk: virtual_key,
+                                wScan: scan_code,
+                                dwFlags: 0,
+                                time: 0,
+                                dwExtraInfo: 0,
+                            };
+                            input_union
+                        },
+                    });
+                    
+                    // Release key
+                    inputs.push(INPUT {
+                        type_: INPUT_KEYBOARD,
+                        u: {
+                            let mut input_union: winapi::um::winuser::INPUT_u = mem::zeroed();
+                            *input_union.ki_mut() = KEYBDINPUT {
+                                wVk: virtual_key,
+                                wScan: scan_code,
+                                dwFlags: KEYEVENTF_KEYUP,
+                                time: 0,
+                                dwExtraInfo: 0,
+                            };
+                            input_union
+                        },
+                    });
+                    
+                    // Release shift if needed
+                    if shift_needed {
+                        inputs.push(INPUT {
+                            type_: INPUT_KEYBOARD,
+                            u: {
+                                let mut input_union: winapi::um::winuser::INPUT_u = mem::zeroed();
+                                *input_union.ki_mut() = KEYBDINPUT {
+                                    wVk: 0x10, // VK_SHIFT
+                                    wScan: MapVirtualKeyA(0x10, MAPVK_VK_TO_VSC) as u16,
+                                    dwFlags: KEYEVENTF_KEYUP,
+                                    time: 0,
+                                    dwExtraInfo: 0,
+                                };
+                                input_union
+                            },
+                        });
+                    }
+                    
+                    let result = SendInput(inputs.len() as u32, inputs.as_mut_ptr(), mem::size_of::<INPUT>() as i32);
+                    if result != inputs.len() as u32 {
+                        return Err(format!("Failed to send input for character '{}', sent {}/{} inputs", ch, result, inputs.len()));
+                    }
+                }
+            }
+        }
+        
+        // Add delay between characters
+        if delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
     }
+    
     Ok(())
 }
 
@@ -636,9 +786,137 @@ async fn perform_scroll(params: ScrollParams) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-async fn press_key(_key: &str, _modifiers: Vec<KeyModifier>) -> Result<(), String> {
-    // This would need proper implementation with SendInput and virtual key codes
-    // For now, return success
+async fn press_key(key: &str, modifiers: Vec<KeyModifier>) -> Result<(), String> {
+    use winapi::um::winuser::{SendInput, INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, MapVirtualKeyA, MAPVK_VK_TO_VSC, VK_RETURN, VK_DELETE, VK_BACK, VK_TAB, VK_ESCAPE, VK_SPACE, VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN};
+    use winapi::um::winuser::{KEYBDINPUT};
+    use std::mem;
+    
+    // Map key names to virtual key codes
+    let virtual_key = match key.to_lowercase().as_str() {
+        "return" | "enter" => VK_RETURN as u32,
+        "delete" | "del" => VK_DELETE as u32,
+        "backspace" | "back" => VK_BACK as u32,
+        "tab" => VK_TAB as u32,
+        "escape" | "esc" => VK_ESCAPE as u32,
+        "space" => VK_SPACE as u32,
+        "left" | "leftarrow" => VK_LEFT as u32,
+        "right" | "rightarrow" => VK_RIGHT as u32,
+        "up" | "uparrow" => VK_UP as u32,
+        "down" | "downarrow" => VK_DOWN as u32,
+        "ctrl" | "control" => VK_CONTROL as u32,
+        "alt" => VK_MENU as u32,
+        "shift" => VK_SHIFT as u32,
+        "meta" | "win" | "windows" => VK_LWIN as u32,
+        // Function keys
+        "f1" => 0x70,
+        "f2" => 0x71,
+        "f3" => 0x72,
+        "f4" => 0x73,
+        "f5" => 0x74,
+        "f6" => 0x75,
+        "f7" => 0x76,
+        "f8" => 0x77,
+        "f9" => 0x78,
+        "f10" => 0x79,
+        "f11" => 0x7A,
+        "f12" => 0x7B,
+        // Single character keys
+        _ if key.len() == 1 => {
+            let ch = key.chars().next().unwrap().to_ascii_uppercase();
+            if ch.is_ascii_alphabetic() {
+                ch as u32
+            } else {
+                return Err(format!("Unsupported key: {}", key));
+            }
+        }
+        _ => return Err(format!("Unsupported key: {}", key)),
+    };
+    
+    // Map modifier enums to virtual key codes
+    let modifier_vks: Vec<u32> = modifiers.iter().map(|m| match m {
+        KeyModifier::Ctrl => VK_CONTROL as u32,
+        KeyModifier::Alt => VK_MENU as u32,
+        KeyModifier::Shift => VK_SHIFT as u32,
+        KeyModifier::Meta => VK_LWIN as u32,
+    }).collect();
+    
+    unsafe {
+        let mut inputs = Vec::new();
+        
+        // Press modifiers
+        for &modifier_vk in &modifier_vks {
+            inputs.push(INPUT {
+                type_: INPUT_KEYBOARD,
+                u: {
+                    let mut input_union: winapi::um::winuser::INPUT_u = mem::zeroed();
+                    *input_union.ki_mut() = KEYBDINPUT {
+                        wVk: modifier_vk as u16,
+                        wScan: MapVirtualKeyA(modifier_vk, MAPVK_VK_TO_VSC) as u16,
+                        dwFlags: 0,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    };
+                    input_union
+                },
+            });
+        }
+        
+        // Press the main key
+        inputs.push(INPUT {
+            type_: INPUT_KEYBOARD,
+            u: {
+                let mut input_union: winapi::um::winuser::INPUT_u = mem::zeroed();
+                *input_union.ki_mut() = KEYBDINPUT {
+                    wVk: virtual_key as u16,
+                    wScan: MapVirtualKeyA(virtual_key, MAPVK_VK_TO_VSC) as u16,
+                    dwFlags: 0,
+                    time: 0,
+                    dwExtraInfo: 0,
+                };
+                input_union
+            },
+        });
+        
+        // Release the main key
+        inputs.push(INPUT {
+            type_: INPUT_KEYBOARD,
+            u: {
+                let mut input_union: winapi::um::winuser::INPUT_u = mem::zeroed();
+                *input_union.ki_mut() = KEYBDINPUT {
+                    wVk: virtual_key as u16,
+                    wScan: MapVirtualKeyA(virtual_key, MAPVK_VK_TO_VSC) as u16,
+                    dwFlags: KEYEVENTF_KEYUP,
+                    time: 0,
+                    dwExtraInfo: 0,
+                };
+                input_union
+            },
+        });
+        
+        // Release modifiers (in reverse order)
+        for &modifier_vk in modifier_vks.iter().rev() {
+            inputs.push(INPUT {
+                type_: INPUT_KEYBOARD,
+                u: {
+                    let mut input_union: winapi::um::winuser::INPUT_u = mem::zeroed();
+                    *input_union.ki_mut() = KEYBDINPUT {
+                        wVk: modifier_vk as u16,
+                        wScan: MapVirtualKeyA(modifier_vk, MAPVK_VK_TO_VSC) as u16,
+                        dwFlags: KEYEVENTF_KEYUP,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    };
+                    input_union
+                },
+            });
+        }
+        
+        let result = SendInput(inputs.len() as u32, inputs.as_mut_ptr(), mem::size_of::<INPUT>() as i32);
+        if result != inputs.len() as u32 {
+            return Err(format!("Failed to send key press input, sent {}/{} inputs", result, inputs.len()));
+        }
+    }
+    
     Ok(())
 }
 
@@ -992,6 +1270,278 @@ impl ComputerUseTool for ClickOnTextTool {
     }
 }
 
+// ========== DEBUG OCR TOOL ==========
+
+#[derive(Clone)]
+pub struct DebugOcrTool;
+
+#[async_trait]
+impl ComputerUseTool for DebugOcrTool {
+    fn name(&self) -> &str { "debug_ocr" }
+    
+    fn description(&self) -> String {
+        "Take a screenshot and show all detected text with locations, confidence scores, and priorities for debugging OCR".to_string()
+    }
+    
+    fn danger_level(&self) -> DangerLevel { DangerLevel::Low }
+    
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "confidence_threshold": {
+                    "type": "number",
+                    "default": 0.7,
+                    "description": "Minimum confidence level for text recognition (0.0-1.0)"
+                },
+                "show_all": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show all detected text, even below confidence threshold"
+                }
+            }
+        })
+    }
+    
+    async fn execute(&self, params: serde_json::Value, _session_id: &str) -> Result<ToolExecutionResult, String> {
+        let start_time = Instant::now();
+        
+        let confidence_threshold = params["confidence_threshold"].as_f64().unwrap_or(0.7);
+        let show_all = params["show_all"].as_bool().unwrap_or(true);
+        
+        // Take screenshot first
+        let screenshot_result = take_screenshot_full(Some("png".to_string()), Some(80)).await?;
+        
+        // Perform OCR to get all text on screen
+        let all_text_locations = debug_ocr_scan(&screenshot_result.image_base64, confidence_threshold, show_all).await?;
+        
+        let execution_time = start_time.elapsed().as_millis() as u64;
+        
+        // Format results for display
+        let mut debug_output = String::new();
+        debug_output.push_str(&format!("🔍 **OCR Debug Results** ({}x{} screenshot)\n\n", screenshot_result.width, screenshot_result.height));
+        debug_output.push_str(&format!("**Confidence Threshold:** {:.2}\n", confidence_threshold));
+        debug_output.push_str(&format!("**Total Text Elements Found:** {}\n\n", all_text_locations.len()));
+        
+        if all_text_locations.is_empty() {
+            debug_output.push_str("❌ No text detected on screen\n");
+        } else {
+            debug_output.push_str("**Text Elements (sorted by confidence, then position):**\n\n");
+            
+            for (i, location) in all_text_locations.iter().enumerate() {
+                let confidence_icon = if location.confidence >= confidence_threshold as f32 { "✅" } else { "⚠️" };
+                let priority_text = if i < 3 { format!("🎯 **PRIORITY {}**", i + 1) } else { format!("#{}", i + 1) };
+                
+                debug_output.push_str(&format!(
+                    "{} {} `\"{}\"` - Confidence: {:.3}\n   📍 Position: ({}, {}) | Center: ({}, {})\n   📏 Size: {}×{}\n\n",
+                    confidence_icon,
+                    priority_text,
+                    location.text,
+                    location.confidence,
+                    location.bounding_box.x,
+                    location.bounding_box.y,
+                    location.center_x,
+                    location.center_y,
+                    location.bounding_box.width,
+                    location.bounding_box.height
+                ));
+            }
+            
+            // Show summary by confidence range
+            let high_confidence = all_text_locations.iter().filter(|l| l.confidence >= 0.9).count();
+            let medium_confidence = all_text_locations.iter().filter(|l| l.confidence >= 0.7 && l.confidence < 0.9).count();
+            let low_confidence = all_text_locations.iter().filter(|l| l.confidence < 0.7).count();
+            
+            debug_output.push_str("**Confidence Summary:**\n");
+            debug_output.push_str(&format!("• High (≥0.9): {} elements\n", high_confidence));
+            debug_output.push_str(&format!("• Medium (0.7-0.9): {} elements\n", medium_confidence));
+            debug_output.push_str(&format!("• Low (<0.7): {} elements\n", low_confidence));
+        }
+        
+        Ok(ToolExecutionResult {
+            success: true,
+            result: serde_json::json!({
+                "debug_output": debug_output,
+                "all_text_locations": all_text_locations,
+                "total_found": all_text_locations.len(),
+                "screenshot_size": {
+                    "width": screenshot_result.width,
+                    "height": screenshot_result.height
+                },
+                "confidence_threshold": confidence_threshold
+            }),
+            error: None,
+            execution_time_ms: execution_time,
+            tool_name: "debug_ocr".to_string(),
+        })
+    }
+    
+    fn clone_box(&self) -> Box<dyn ComputerUseTool + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+// ========== NEW COMPOUND TOOL: CLICK AND TYPE ==========
+
+#[derive(Clone)]
+pub struct ClickAndTypeTool;
+
+#[async_trait]
+impl ComputerUseTool for ClickAndTypeTool {
+    fn name(&self) -> &str { "click_and_type" }
+    
+    fn description(&self) -> String {
+        "Find text on screen (like a textbox label), click on it, and then type text into the focused element".to_string()
+    }
+    
+    fn danger_level(&self) -> DangerLevel { DangerLevel::Medium }
+    
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "click_target": {
+                    "type": "string",
+                    "description": "Text to find and click on (e.g., 'Search' textbox, placeholder text, or nearby label)"
+                },
+                "text_to_type": {
+                    "type": "string",
+                    "description": "Text to type after clicking"
+                },
+                "confidence_threshold": {
+                    "type": "number",
+                    "default": 0.8,
+                    "description": "Minimum confidence level for text recognition"
+                },
+                "press_enter": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether to press Enter after typing"
+                },
+                "clear_existing": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Whether to clear existing text (Ctrl+A, Delete) before typing"
+                },
+                "delay_ms": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Delay between keystrokes in milliseconds"
+                }
+            },
+            "required": ["click_target", "text_to_type"]
+        })
+    }
+    
+    async fn execute(&self, params: serde_json::Value, session_id: &str) -> Result<ToolExecutionResult, String> {
+        let start_time = Instant::now();
+        
+        let click_target = params["click_target"].as_str()
+            .ok_or("Missing required parameter: click_target")?;
+        let text_to_type = params["text_to_type"].as_str()
+            .ok_or("Missing required parameter: text_to_type")?;
+        let confidence_threshold = params["confidence_threshold"].as_f64().unwrap_or(0.8);
+        let press_enter = params["press_enter"].as_bool().unwrap_or(false);
+        let clear_existing = params["clear_existing"].as_bool().unwrap_or(true);
+        let delay_ms = params["delay_ms"].as_u64().unwrap_or(10);
+        
+        log::info!("Session {}: Executing click_and_type - target: '{}', text: '{}'", session_id, click_target, text_to_type);
+        
+        // Step 1: Find and click the target
+        let click_params = serde_json::json!({
+            "text": click_target,
+            "confidence_threshold": confidence_threshold,
+            "button": "left"
+        });
+        
+        let click_tool = ClickOnTextTool;
+        let click_result = click_tool.execute(click_params, session_id).await?;
+        
+        if !click_result.success {
+            return Ok(ToolExecutionResult {
+                success: false,
+                result: serde_json::json!({
+                    "click_target": click_target,
+                    "text_to_type": text_to_type,
+                    "step_failed": "click",
+                    "error": "Failed to find or click target text"
+                }),
+                error: Some(format!("Failed to find or click target text: {}", click_target)),
+                execution_time_ms: start_time.elapsed().as_millis() as u64,
+                tool_name: "click_and_type".to_string(),
+            });
+        }
+        
+        // Small delay to ensure the click registered and focus changed
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
+        // Step 2: Clear existing text if requested
+        if clear_existing {
+            // Ctrl+A to select all, then Delete to clear
+            let select_all_result = press_key("a", vec![KeyModifier::Ctrl]).await;
+            if let Err(e) = select_all_result {
+                log::warn!("Failed to select all text: {}", e);
+            } else {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                let delete_result = press_key("Delete", vec![]).await;
+                if let Err(e) = delete_result {
+                    log::warn!("Failed to delete selected text: {}", e);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        }
+        
+        // Step 3: Type the text
+        let type_result = type_text(text_to_type, delay_ms).await;
+        if let Err(e) = type_result {
+            return Ok(ToolExecutionResult {
+                success: false,
+                result: serde_json::json!({
+                    "click_target": click_target,
+                    "text_to_type": text_to_type,
+                    "step_failed": "type",
+                    "click_location": click_result.result["location"],
+                    "error": format!("Failed to type text: {}", e)
+                }),
+                error: Some(format!("Failed to type text: {}", e)),
+                execution_time_ms: start_time.elapsed().as_millis() as u64,
+                tool_name: "click_and_type".to_string(),
+            });
+        }
+        
+        // Step 4: Press Enter if requested
+        if press_enter {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let enter_result = press_key("Return", vec![]).await;
+            if let Err(e) = enter_result {
+                log::warn!("Failed to press Enter: {}", e);
+            }
+        }
+        
+        let execution_time = start_time.elapsed().as_millis() as u64;
+        
+        Ok(ToolExecutionResult {
+            success: true,
+            result: serde_json::json!({
+                "click_target": click_target,
+                "text_to_type": text_to_type,
+                "click_location": click_result.result["location"],
+                "characters_typed": text_to_type.chars().count(),
+                "cleared_existing": clear_existing,
+                "pressed_enter": press_enter,
+                "message": format!("Successfully clicked '{}' and typed {} characters", click_target, text_to_type.chars().count())
+            }),
+            error: None,
+            execution_time_ms: execution_time,
+            tool_name: "click_and_type".to_string(),
+        })
+    }
+    
+    fn clone_box(&self) -> Box<dyn ComputerUseTool + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
 // ========== OCR HELPER FUNCTIONS ==========
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1020,6 +1570,21 @@ async fn find_text_in_image(
     #[cfg(target_os = "windows")]
     {
         windows_ocr_find_text(base64_image, target_text, confidence_threshold, case_sensitive).await
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("OCR is only supported on Windows currently".to_string())
+    }
+}
+
+async fn debug_ocr_scan(
+    base64_image: &str,
+    confidence_threshold: f64,
+    show_all: bool,
+) -> Result<Vec<TextLocation>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        windows_ocr_debug_scan(base64_image, confidence_threshold, show_all).await
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -1146,6 +1711,133 @@ async fn windows_ocr_find_text(
             .then_with(|| a.bounding_box.y.cmp(&b.bounding_box.y))
             .then_with(|| a.bounding_box.x.cmp(&b.bounding_box.x))
     });
+    
+    Ok(results)
+}
+
+#[cfg(target_os = "windows")]
+async fn windows_ocr_debug_scan(
+    base64_image: &str,
+    confidence_threshold: f64,
+    show_all: bool,
+) -> Result<Vec<TextLocation>, String> {
+    use base64::Engine;
+    use windows::{
+        Media::Ocr::*,
+        Storage::Streams::*,
+        Graphics::Imaging::*,
+    };
+    
+    // Decode base64 image
+    let image_data = base64::engine::general_purpose::STANDARD
+        .decode(base64_image)
+        .map_err(|e| format!("Failed to decode base64 image: {}", e))?;
+    
+    // Create OCR engine
+    let ocr_engine = OcrEngine::TryCreateFromUserProfileLanguages()
+        .map_err(|e| format!("Failed to create OCR engine: {}", e))?;
+    
+    // Create memory stream from image data
+    let stream = InMemoryRandomAccessStream::new()
+        .map_err(|e| format!("Failed to create memory stream: {}", e))?;
+    
+    let writer = stream.GetOutputStreamAt(0)
+        .map_err(|e| format!("Failed to get output stream: {}", e))?;
+    
+    // Write image data to stream using DataWriter
+    let data_writer = windows::Storage::Streams::DataWriter::CreateDataWriter(&writer)
+        .map_err(|e| format!("Failed to create data writer: {}", e))?;
+    
+    data_writer.WriteBytes(&image_data)
+        .map_err(|e| format!("Failed to write bytes: {}", e))?;
+    
+    data_writer.StoreAsync()
+        .map_err(|e| format!("Failed to store data: {}", e))?
+        .get()
+        .map_err(|e| format!("Failed to complete store: {}", e))?;
+    
+    writer.FlushAsync()
+        .map_err(|e| format!("Failed to flush stream: {}", e))?
+        .get()
+        .map_err(|e| format!("Failed to complete flush: {}", e))?;
+    
+    // Create bitmap decoder
+    let decoder = BitmapDecoder::CreateAsync(&stream)
+        .map_err(|e| format!("Failed to create bitmap decoder: {}", e))?
+        .get()
+        .map_err(|e| format!("Failed to get bitmap decoder: {}", e))?;
+    
+    // Get software bitmap
+    let bitmap = decoder.GetSoftwareBitmapAsync()
+        .map_err(|e| format!("Failed to get software bitmap: {}", e))?
+        .get()
+        .map_err(|e| format!("Failed to complete bitmap operation: {}", e))?;
+    
+    // Perform OCR
+    let ocr_result = ocr_engine.RecognizeAsync(&bitmap)
+        .map_err(|e| format!("Failed to start OCR: {}", e))?
+        .get()
+        .map_err(|e| format!("Failed to complete OCR: {}", e))?;
+    
+    // Extract ALL text and positions (for debugging)
+    let mut results = Vec::new();
+    
+    let lines = ocr_result.Lines()
+        .map_err(|e| format!("Failed to get OCR lines: {}", e))?;
+    
+    for line in lines {
+        let words = line.Words()
+            .map_err(|e| format!("Failed to get line words: {}", e))?;
+        
+        for word in words {
+            let text = word.Text()
+                .map_err(|e| format!("Failed to get word text: {}", e))?
+                .to_string();
+            
+            if text.trim().is_empty() {
+                continue; // Skip empty text
+            }
+            
+            let bounding_rect = word.BoundingRect()
+                .map_err(|e| format!("Failed to get bounding rect: {}", e))?;
+            
+            // Windows OCR doesn't provide confidence per word, so we'll use a default high confidence
+            let confidence = 0.95_f32; // High confidence for Windows OCR
+            
+            // Include all text if show_all is true, or only text above threshold
+            if show_all || confidence >= confidence_threshold as f32 {
+                let x = bounding_rect.X as i32;
+                let y = bounding_rect.Y as i32;
+                let width = bounding_rect.Width as i32;
+                let height = bounding_rect.Height as i32;
+                
+                let center_x = x + width / 2;
+                let center_y = y + height / 2;
+                
+                results.push(TextLocation {
+                    text: text.clone(),
+                    confidence,
+                    bounding_box: TextBoundingBox { x, y, width, height },
+                    center_x,
+                    center_y,
+                });
+            }
+        }
+    }
+    
+    // Sort by confidence (highest first) and then by position (top to bottom, left to right)
+    results.sort_by(|a, b| {
+        b.confidence.partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.bounding_box.y.cmp(&b.bounding_box.y))
+            .then_with(|| a.bounding_box.x.cmp(&b.bounding_box.x))
+    });
+    
+    log::info!("🔍 OCR Debug: Found {} text elements total", results.len());
+    for (i, result) in results.iter().take(10).enumerate() {
+        log::info!("  {}. \"{}\" at ({}, {}) confidence: {:.3}", 
+                  i + 1, result.text, result.center_x, result.center_y, result.confidence);
+    }
     
     Ok(results)
 }

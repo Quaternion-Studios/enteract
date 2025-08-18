@@ -251,7 +251,52 @@ export class MCPService {
     const actions: { toolName: string, parameters: any }[] = []
     const lowerMessage = message.toLowerCase()
 
-    // Compound tool: Click on text (highest priority)
+    // Compound tool: Click and type (highest priority - for textbox interactions)
+    if ((lowerMessage.includes('type') && (lowerMessage.includes('into') || lowerMessage.includes('in'))) ||
+        (lowerMessage.includes('search') && lowerMessage.includes('for')) ||
+        (lowerMessage.includes('enter') && lowerMessage.includes('text'))) {
+      const clickAndTypeTool = availableTools.find(tool => tool.name === 'click_and_type')
+      if (clickAndTypeTool) {
+        // Try to extract what to click and what to type
+        const typeMatch = lowerMessage.match(/type\s+["']([^"']+)["']/) || 
+                         lowerMessage.match(/search\s+for\s+["']([^"']+)["']/) ||
+                         lowerMessage.match(/enter\s+["']([^"']+)["']/) ||
+                         lowerMessage.match(/type\s+(\w+)/) ||
+                         lowerMessage.match(/search\s+for\s+(\w+)/) ||
+                         lowerMessage.match(/enter\s+(\w+)/)
+        
+        const clickMatch = lowerMessage.match(/into\s+["']([^"']+)["']/) ||
+                          lowerMessage.match(/in\s+the\s+["']([^"']+)["']/) ||
+                          lowerMessage.match(/\b(search|text|input|field|box|google)\b/)
+        
+        // Extract text to type with better fallbacks
+        let textToType = 'test search' // Better default
+        if (typeMatch) {
+          textToType = typeMatch[1] || typeMatch[0]
+        } else {
+          // Try to extract any meaningful words from the message
+          const words = lowerMessage.replace(/\b(type|search|for|into|in|the|and|or|a|an)\b/g, '').trim().split(/\s+/)
+          const meaningfulWords = words.filter(word => word.length > 2 && !/^(can|you|please|help|me|my|i|we|our|your)$/.test(word))
+          if (meaningfulWords.length > 0) {
+            textToType = meaningfulWords.slice(0, 3).join(' ') // Take first 3 meaningful words
+          }
+        }
+        
+        const clickTarget = clickMatch ? (clickMatch[1] || clickMatch[0]) : 'Search'
+        
+        actions.push({
+          toolName: 'click_and_type',
+          parameters: { 
+            click_target: clickTarget,
+            text_to_type: textToType,
+            press_enter: lowerMessage.includes('enter') || lowerMessage.includes('search')
+          }
+        })
+        return actions // Return early - this is a compound action
+      }
+    }
+
+    // Compound tool: Click on text (second priority)
     if ((lowerMessage.includes('click') && lowerMessage.includes('text')) || 
         (lowerMessage.includes('click') && lowerMessage.includes('on'))) {
       const clickOnTextTool = availableTools.find(tool => tool.name === 'click_on_text')
@@ -367,6 +412,17 @@ export class MCPService {
       if (screenTool) {
         actions.push({
           toolName: screenTool.name,
+          parameters: {}
+        })
+      }
+    }
+
+    // Debug OCR
+    if (lowerMessage.includes('debug') && lowerMessage.includes('ocr')) {
+      const debugOcrTool = availableTools.find(tool => tool.name === 'debug_ocr')
+      if (debugOcrTool) {
+        actions.push({
+          toolName: 'debug_ocr',
           parameters: {}
         })
       }
