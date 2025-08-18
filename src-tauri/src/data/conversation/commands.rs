@@ -55,10 +55,28 @@ pub fn save_conversation_message(
     session_id: String,
     message: ConversationMessage,
 ) -> Result<(), String> {
+    println!("📥 save_conversation_message called - session_id: {}, message_id: {}", session_id, message.id);
+    
     match ConversationStorage::new(&app_handle) {
-        Ok(mut storage) => storage.save_conversation_message(&session_id, message)
-            .map_err(|e| format!("Failed to save conversation message: {}", e)),
-        Err(e) => Err(format!("Failed to initialize conversation storage: {}", e))
+        Ok(mut storage) => {
+            let result = storage.save_conversation_message(&session_id, message);
+            match result {
+                Ok(_) => {
+                    println!("✅ Message saved successfully");
+                    Ok(())
+                }
+                Err(e) => {
+                    let error_msg = format!("Failed to save conversation message: {}", e);
+                    println!("❌ {}", error_msg);
+                    Err(error_msg)
+                }
+            }
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to initialize conversation storage: {}", e);
+            println!("❌ {}", error_msg);
+            Err(error_msg)
+        }
     }
 }
 
@@ -68,10 +86,28 @@ pub fn batch_save_conversation_messages(
     session_id: String,
     messages: Vec<ConversationMessage>,
 ) -> Result<(), String> {
+    println!("📥 batch_save_conversation_messages called - session_id: {}, message_count: {}", session_id, messages.len());
+    
     match ConversationStorage::new(&app_handle) {
-        Ok(mut storage) => storage.batch_save_conversation_messages(&session_id, messages)
-            .map_err(|e| format!("Failed to batch save conversation messages: {}", e)),
-        Err(e) => Err(format!("Failed to initialize conversation storage: {}", e))
+        Ok(mut storage) => {
+            let result = storage.batch_save_conversation_messages(&session_id, messages);
+            match result {
+                Ok(_) => {
+                    println!("✅ Batch messages saved successfully");
+                    Ok(())
+                }
+                Err(e) => {
+                    let error_msg = format!("Failed to batch save conversation messages: {}", e);
+                    println!("❌ {}", error_msg);
+                    Err(error_msg)
+                }
+            }
+        }
+        Err(e) => {
+            let error_msg = format!("Failed to initialize conversation storage: {}", e);
+            println!("❌ {}", error_msg);
+            Err(error_msg)
+        }
     }
 }
 

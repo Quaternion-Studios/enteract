@@ -37,10 +37,16 @@ impl ChatStorage {
             e
         })?;
         
-        // Set journal mode with proper handling
-        match connection.execute("PRAGMA journal_mode = WAL", params![]) {
-            Ok(_) => println!("✅ Set journal mode to WAL"),
-            Err(e) => println!("⚠️ Warning: Failed to set WAL mode: {}", e),
+        // Set journal mode with proper handling (WAL returns a result, so use query_row)
+        match connection.query_row("PRAGMA journal_mode = WAL", params![], |row| row.get::<_, String>(0)) {
+            Ok(mode) => {
+                if mode.to_lowercase() == "wal" {
+                    println!("✅ WAL mode enabled successfully");
+                } else {
+                    println!("ℹ️ Journal mode is: {} (WAL may not be available)", mode);
+                }
+            }
+            Err(e) => println!("⚠️ Warning: Could not set journal mode: {}", e),
         }
         
         // Set other pragmas with execute (they don't necessarily return meaningful results)

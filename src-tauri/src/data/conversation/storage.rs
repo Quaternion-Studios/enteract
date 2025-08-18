@@ -38,10 +38,16 @@ impl ConversationStorage {
             e
         })?;
         
-        // Set journal mode with proper handling
-        match connection.execute("PRAGMA journal_mode = WAL", params![]) {
-            Ok(_) => println!("✅ Set journal mode to WAL"),
-            Err(e) => println!("⚠️ Warning: Failed to set WAL mode: {}", e),
+        // Set journal mode with proper handling (WAL returns a result, so use query_row)
+        match connection.query_row("PRAGMA journal_mode = WAL", params![], |row| row.get::<_, String>(0)) {
+            Ok(mode) => {
+                if mode.to_lowercase() == "wal" {
+                    println!("✅ WAL mode enabled successfully");
+                } else {
+                    println!("ℹ️ Journal mode is: {} (WAL may not be available)", mode);
+                }
+            }
+            Err(e) => println!("⚠️ Warning: Could not set journal mode: {}", e),
         }
         
         // Set other pragmas with execute (they don't necessarily return meaningful results)
@@ -208,6 +214,13 @@ impl ConversationStorage {
                 content: row.get("content")?,
                 timestamp: row.get("timestamp")?,
                 confidence: row.get("confidence")?,
+                // Frontend-only fields set to None when loading from DB
+                is_preview: None,
+                is_typing: None,
+                persistence_state: Some("saved".to_string()),
+                retry_count: None,
+                last_save_attempt: None,
+                save_error: None,
             })
         })?;
 
@@ -245,6 +258,9 @@ impl ConversationStorage {
 
     // Individual message operations
     pub fn save_conversation_message(&mut self, session_id: &str, message: ConversationMessage) -> Result<()> {
+        println!("🔍 Attempting to save message: id={}, type={}, source={}", 
+                 message.id, message.message_type, message.source);
+        
         // Check if message already exists (deduplication)
         let exists: bool = match self.connection.query_row(
             "SELECT 1 FROM conversation_messages WHERE id = ? LIMIT 1",
@@ -253,12 +269,45 @@ impl ConversationStorage {
         ) {
             Ok(val) => val,
             Err(rusqlite::Error::QueryReturnedNoRows) => false,
-            Err(e) => return Err(e),
+            Err(e) => {
+                println!("❌ Error checking message existence: {}", e);
+                return Err(e);
+            }
         };
 
         if exists {
-            println!("⚠️ Message {} already exists, skipping", message.id);
-            return Ok(()); // Message already saved
+            println!("⚠️ Message {} already exists in database, skipping duplicate", message.id);
+            return Ok(()); // Message already saved - not an error
+        }
+
+        // Validate session exists
+        let session_exists: bool = match self.connection.query_row(
+            "SELECT 1 FROM conversation_sessions WHERE id = ? LIMIT 1",
+            params![session_id],
+            |_| Ok(true)
+        ) {
+            Ok(val) => val,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                println!("⚠️ Session {} does not exist, creating it first", session_id);
+                false
+            }
+            Err(e) => {
+                println!("❌ Error checking session existence: {}", e);
+                return Err(e);
+            }
+        };
+
+        if !session_exists {
+            // Create a minimal session entry if it doesn't exist
+            self.connection.execute(
+                "INSERT OR IGNORE INTO conversation_sessions (id, name, start_time, end_time, is_active) 
+                 VALUES (?, ?, ?, NULL, 1)",
+                params![session_id, format!("Session {}", session_id), message.timestamp]
+            ).map_err(|e| {
+                println!("❌ Failed to create session {}: {}", session_id, e);
+                e
+            })?;
+            println!("✅ Created missing session: {}", session_id);
         }
 
         let affected = self.connection.execute(
@@ -268,9 +317,15 @@ impl ConversationStorage {
                 message.id, session_id, message.message_type, message.source,
                 message.content, message.timestamp, message.confidence
             ]
-        )?;
+        ).map_err(|e| {
+            println!("❌ Failed to insert message: {}", e);
+            println!("   Message details: id={}, session_id={}, type={}, source={}", 
+                     message.id, session_id, message.message_type, message.source);
+            e
+        })?;
 
-        println!("✅ Saved conversation message {} to session {} (rows: {})", message.id, session_id, affected);
+        println!("✅ Successfully saved message {} to session {} (rows affected: {})", 
+                 message.id, session_id, affected);
         Ok(())
     }
 

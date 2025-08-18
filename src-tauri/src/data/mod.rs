@@ -5,9 +5,13 @@ pub mod types;           // Core data structures
 pub mod chat;            // Chat session storage (Claude conversations)
 pub mod conversation;    // Audio conversation storage
 pub mod migration;       // Database initialization and cleanup
+pub mod errors;          // Error handling types and utilities
+pub mod connection_pool; // Database connection pooling
+pub mod logging;         // Comprehensive logging system
 
 // Re-export all the commonly used types and functions
 pub use types::*;
+pub use errors::*;
 
 // Re-export chat commands
 pub use chat::{
@@ -35,4 +39,14 @@ pub use migration::{
     initialize_database,
     get_database_info,
     cleanup_legacy_files,
+    check_database_health,
+};
+
+// Re-export logging commands
+pub use logging::{
+    get_database_logs,
+    get_database_logs_by_operation,
+    get_database_logs_by_level,
+    get_database_log_stats,
+    clear_database_logs,
 };

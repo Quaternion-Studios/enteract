@@ -59,6 +59,107 @@
         </button>
       </div>
 
+      <div class="advanced-section">
+        <div class="action-buttons">
+          <button @click="checkHealth" :disabled="loadingHealth" class="btn-secondary">
+            {{ loadingHealth ? '⏳' : '🔍' }} {{ showHealth ? 'Refresh' : 'Check' }} Health
+          </button>
+          <button @click="refreshLogs" :disabled="loadingLogs" class="btn-secondary">
+            {{ loadingLogs ? '⏳' : '📋' }} {{ showLogs ? 'Refresh' : 'View' }} Logs
+          </button>
+        </div>
+
+        <div v-if="showHealth && health" class="health-section">
+          <h4>🔍 Database Health</h4>
+          <div class="health-indicator" :class="{ 'healthy': health.is_healthy, 'unhealthy': !health.is_healthy }">
+            <span class="status-icon">{{ health.is_healthy ? '✅' : '❌' }}</span>
+            <span class="status-text">{{ health.is_healthy ? 'Healthy' : 'Issues Detected' }}</span>
+            <span class="check-time">({{ health.check_duration_ms }}ms)</span>
+          </div>
+
+          <div class="health-details">
+            <div class="detail-grid">
+              <div class="detail-item">
+                <span class="label">Connection:</span>
+                <span :class="health.can_connect ? 'success' : 'error'">
+                  {{ health.can_connect ? 'OK' : 'Failed' }}
+                </span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Read/Write:</span>
+                <span :class="health.can_read && health.can_write ? 'success' : 'error'">
+                  {{ health.can_read && health.can_write ? 'OK' : 'Failed' }}
+                </span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Tables:</span>
+                <span :class="health.tables_exist ? 'success' : 'error'">
+                  {{ health.tables_exist ? 'OK' : 'Missing' }}
+                </span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Indexes:</span>
+                <span :class="health.indexes_exist ? 'success' : 'warning'">
+                  {{ health.indexes_exist ? 'OK' : 'Missing' }}
+                </span>
+              </div>
+              <div class="detail-item">
+                <span class="label">WAL Mode:</span>
+                <span :class="health.wal_mode ? 'success' : 'warning'">
+                  {{ health.wal_mode ? 'Enabled' : 'Disabled' }}
+                </span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Foreign Keys:</span>
+                <span :class="health.foreign_keys_enabled ? 'success' : 'warning'">
+                  {{ health.foreign_keys_enabled ? 'Enabled' : 'Disabled' }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="health.errors.length > 0" class="issues-section errors">
+            <h5>❌ Errors:</h5>
+            <ul>
+              <li v-for="error in health.errors" :key="error">{{ error }}</li>
+            </ul>
+          </div>
+
+          <div v-if="health.warnings.length > 0" class="issues-section warnings">
+            <h5>⚠️ Warnings:</h5>
+            <ul>
+              <li v-for="warning in health.warnings" :key="warning">{{ warning }}</li>
+            </ul>
+          </div>
+        </div>
+
+        <div v-if="showLogs" class="logs-section">
+          <div class="logs-header">
+            <h4>📋 Database Logs</h4>
+            <div class="log-controls">
+              <button @click="refreshLogs" :disabled="loadingLogs" class="btn-sm">
+                {{ loadingLogs ? '⏳' : '🔄' }}
+              </button>
+              <button @click="clearLogs" :disabled="loadingLogs" class="btn-sm">
+                🗑️
+              </button>
+            </div>
+          </div>
+          
+          <div v-if="logs.length > 0" class="logs-list">
+            <div v-for="log in logs.slice(-20)" :key="log.timestamp" 
+                 class="log-entry" 
+                 :class="logLevelClass(log.level)">
+              <div class="log-time">{{ formatTime(log.timestamp) }}</div>
+              <div class="log-operation">{{ log.operation }}</div>
+              <div class="log-message">{{ log.message }}</div>
+              <div v-if="log.duration_ms" class="log-duration">{{ log.duration_ms }}ms</div>
+            </div>
+          </div>
+          <div v-else class="no-logs">No logs available</div>
+        </div>
+      </div>
+
       <div v-if="error" class="error-message">
         <h4>❌ Error</h4>
         <p>{{ error }}</p>
@@ -81,13 +182,46 @@ interface DatabaseInfo {
   database_size_mb: number
 }
 
+interface DatabaseHealth {
+  is_healthy: boolean
+  can_connect: boolean
+  can_read: boolean
+  can_write: boolean
+  foreign_keys_enabled: boolean
+  wal_mode: boolean
+  tables_exist: boolean
+  indexes_exist: boolean
+  path_accessible: boolean
+  directory_writable: boolean
+  last_check: number
+  check_duration_ms: number
+  errors: string[]
+  warnings: string[]
+}
+
+interface LogEntry {
+  level: string
+  timestamp: number
+  operation: string
+  message: string
+  details?: any
+  duration_ms?: number
+  session_id?: string
+}
+
 // State
 const loading = ref(true)
 const initializing = ref(false)
 const cleaning = ref(false)
+const loadingHealth = ref(false)
+const loadingLogs = ref(false)
 const dbInfo = ref<DatabaseInfo | null>(null)
+const health = ref<DatabaseHealth | null>(null)
+const logs = ref<LogEntry[]>([])
 const error = ref<string | null>(null)
 const hasLegacyFiles = ref(false)
+const showHealth = ref(false)
+const showLogs = ref(false)
 
 // Methods
 async function refreshInfo() {
@@ -155,6 +289,75 @@ async function cleanupLegacyFiles() {
     console.error('Cleanup error:', err)
   } finally {
     cleaning.value = false
+  }
+}
+
+async function checkHealth() {
+  try {
+    loadingHealth.value = true
+    error.value = null
+    
+    health.value = await invoke<DatabaseHealth>('check_database_health')
+    showHealth.value = true
+    
+  } catch (err) {
+    error.value = `Failed to check database health: ${err}`
+    console.error('Database health check error:', err)
+  } finally {
+    loadingHealth.value = false
+  }
+}
+
+async function refreshLogs() {
+  try {
+    loadingLogs.value = true
+    error.value = null
+    
+    logs.value = await invoke<LogEntry[]>('get_database_logs', { lastN: 50 })
+    showLogs.value = true
+    
+  } catch (err) {
+    error.value = `Failed to get database logs: ${err}`
+    console.error('Database logs error:', err)
+  } finally {
+    loadingLogs.value = false
+  }
+}
+
+async function clearLogs() {
+  try {
+    loadingLogs.value = true
+    error.value = null
+    
+    await invoke('clear_database_logs')
+    logs.value = []
+    
+  } catch (err) {
+    error.value = `Failed to clear database logs: ${err}`
+    console.error('Clear logs error:', err)
+  } finally {
+    loadingLogs.value = false
+  }
+}
+
+function formatTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString()
+}
+
+function logLevelClass(level: string): string {
+  switch (level.toLowerCase()) {
+    case 'error':
+    case 'critical':
+      return 'log-error'
+    case 'warn':
+      return 'log-warn'
+    case 'info':
+      return 'log-info'
+    case 'debug':
+    case 'trace':
+      return 'log-debug'
+    default:
+      return ''
   }
 }
 
@@ -353,5 +556,242 @@ button:disabled {
   margin: 0 0 1rem 0;
   color: #a00;
   font-size: 0.9rem;
+}
+
+.advanced-section {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.action-buttons {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  justify-content: center;
+}
+
+.health-section, .logs-section {
+  margin-top: 1.5rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.health-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  border-radius: 6px;
+}
+
+.health-indicator.healthy {
+  background: rgba(0, 255, 0, 0.1);
+  border: 1px solid rgba(0, 255, 0, 0.3);
+}
+
+.health-indicator.unhealthy {
+  background: rgba(255, 0, 0, 0.1);
+  border: 1px solid rgba(255, 0, 0, 0.3);
+}
+
+.status-icon {
+  font-size: 1.2rem;
+}
+
+.status-text {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.check-time {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin-left: auto;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.detail-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.detail-item .label {
+  color: var(--text-secondary);
+}
+
+.success {
+  color: #4ade80;
+  font-weight: 500;
+}
+
+.warning {
+  color: #fbbf24;
+  font-weight: 500;
+}
+
+.error {
+  color: #f87171;
+  font-weight: 500;
+}
+
+.issues-section {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border-radius: 6px;
+}
+
+.issues-section.errors {
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
+
+.issues-section.warnings {
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.issues-section h5 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+}
+
+.issues-section ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.issues-section li {
+  padding: 0.25rem 0;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.logs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.logs-header h4 {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.log-controls {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-sm {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background 0.2s;
+}
+
+.btn-sm:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.btn-sm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.logs-list {
+  max-height: 250px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+}
+
+.log-entry {
+  display: grid;
+  grid-template-columns: auto 120px 1fr auto;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.8rem;
+  align-items: center;
+}
+
+.log-entry:last-child {
+  border-bottom: none;
+}
+
+.log-error {
+  background: rgba(248, 113, 113, 0.05);
+  border-left: 3px solid #f87171;
+}
+
+.log-warn {
+  background: rgba(251, 191, 36, 0.05);
+  border-left: 3px solid #fbbf24;
+}
+
+.log-info {
+  background: rgba(59, 130, 246, 0.05);
+  border-left: 3px solid #3b82f6;
+}
+
+.log-debug {
+  background: rgba(156, 163, 175, 0.05);
+  border-left: 3px solid #9ca3af;
+}
+
+.log-time {
+  color: var(--text-secondary);
+  font-family: monospace;
+}
+
+.log-operation {
+  color: #60a5fa;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log-message {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log-duration {
+  color: #10b981;
+  text-align: right;
+  font-family: monospace;
+  white-space: nowrap;
+}
+
+.no-logs {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-secondary);
+  font-style: italic;
 }
 </style>

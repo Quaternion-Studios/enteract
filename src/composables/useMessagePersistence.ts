@@ -24,6 +24,7 @@ export function useMessagePersistence() {
   const pendingQueue = ref<MessageSaveRequest[]>([])
   const failedQueue = ref<MessageSaveRequest[]>([])
   const isSaving = ref(false)
+  const concurrentSaves = ref(0)
   const saveStats = ref({
     totalSaved: 0,
     totalFailed: 0,
@@ -31,12 +32,13 @@ export function useMessagePersistence() {
     averageSaveTime: 0
   })
 
-  // Configuration
+  // Configuration  
   const MAX_RETRY_COUNT = 3
   const RETRY_DELAY_BASE = 1000 // Base delay in ms
-  const BATCH_SIZE = 10
-  const SAVE_DEBOUNCE_MS = 500
+  const BATCH_SIZE = 5 // Reduced batch size for better reliability
+  const SAVE_DEBOUNCE_MS = 200 // Faster debounce for better responsiveness
   const OFFLINE_CHECK_INTERVAL = 5000
+  const MAX_CONCURRENT_SAVES = 2 // Limit concurrent operations
 
   // Timers
   let saveTimer: number | null = null
@@ -81,15 +83,29 @@ export function useMessagePersistence() {
     try {
       const startTime = Date.now()
       
+      // Debug logging
+      console.log('📤 Sending message to backend:', {
+        session_id: sessionId,
+        message_id: message.id,
+        message_type: message.type
+      })
+      
       await invoke('save_conversation_message', {
-        sessionId,
+        session_id: sessionId, // Fixed: backend expects snake_case
         message: {
           id: message.id,
-          message_type: message.type, // Fixed: backend expects message_type
+          message_type: message.type, // Backend expects message_type
           source: message.source,
           content: message.content,
           timestamp: message.timestamp,
-          confidence: message.confidence
+          confidence: message.confidence,
+          // Include optional fields to prevent serialization issues
+          is_preview: message.isPreview || false,
+          is_typing: message.isTyping || false,
+          persistence_state: message.persistenceState,
+          retry_count: message.retryCount || 0,
+          last_save_attempt: message.lastSaveAttempt,
+          save_error: message.saveError
         }
       })
       
@@ -101,6 +117,7 @@ export function useMessagePersistence() {
         messageId: message.id
       }
     } catch (error) {
+      console.error('❌ saveMessageToBackend error:', error)
       updateSaveStats(false)
       return {
         success: false,
@@ -116,14 +133,21 @@ export function useMessagePersistence() {
       const startTime = Date.now()
       
       await invoke('batch_save_conversation_messages', {
-        sessionId: batch.sessionId,
+        session_id: batch.sessionId, // Fixed: backend expects snake_case
         messages: batch.messages.map(msg => ({
           id: msg.id,
-          message_type: msg.type, // Fixed: backend expects message_type
+          message_type: msg.type, // Backend expects message_type
           source: msg.source,
           content: msg.content,
           timestamp: msg.timestamp,
-          confidence: msg.confidence
+          confidence: msg.confidence,
+          // Include optional fields
+          is_preview: msg.isPreview || false,
+          is_typing: msg.isTyping || false,
+          persistence_state: msg.persistenceState,
+          retry_count: msg.retryCount || 0,
+          last_save_attempt: msg.lastSaveAttempt,
+          save_error: msg.saveError
         }))
       })
       
@@ -199,9 +223,9 @@ export function useMessagePersistence() {
     }
   }
 
-  // Process pending message queue
+  // Process pending message queue with concurrency control
   const processPendingQueue = async () => {
-    if (isSaving.value || pendingQueue.value.length === 0) {
+    if (concurrentSaves.value >= MAX_CONCURRENT_SAVES || pendingQueue.value.length === 0) {
       return
     }
     
@@ -210,6 +234,7 @@ export function useMessagePersistence() {
       return
     }
     
+    concurrentSaves.value++
     isSaving.value = true
     
     try {
@@ -275,7 +300,8 @@ export function useMessagePersistence() {
         setTimeout(() => processPendingQueue(), 100)
       }
     } finally {
-      isSaving.value = false
+      concurrentSaves.value--
+      isSaving.value = concurrentSaves.value > 0
     }
   }
 
@@ -366,8 +392,8 @@ export function useMessagePersistence() {
   ): Promise<boolean> => {
     try {
       await invoke('update_conversation_message', {
-        sessionId,
-        messageId,
+        session_id: sessionId, // Fixed: backend expects snake_case
+        message_id: messageId, // Fixed: backend expects snake_case
         updates: {
           content: updates.content,
           confidence: updates.confidence,
@@ -388,8 +414,8 @@ export function useMessagePersistence() {
   ): Promise<boolean> => {
     try {
       await invoke('delete_conversation_message', {
-        sessionId,
-        messageId
+        session_id: sessionId, // Fixed: backend expects snake_case
+        message_id: messageId  // Fixed: backend expects snake_case
       })
       return true
     } catch (error) {

@@ -75,7 +75,7 @@ export const useConversationStore = defineStore('conversation', () => {
     }
   }
 
-  // Save sessions to SQLite backend
+  // Save sessions to SQLite backend with better error handling
   const saveSessions = async (forceImmediate = false) => {
     if (isSaving.value && !forceImmediate) {
       console.log('💾 Store: Save already in progress, will queue this save')
@@ -83,27 +83,29 @@ export const useConversationStore = defineStore('conversation', () => {
       return
     }
 
+    const saveId = `save_${Date.now()}`
     try {
       isSaving.value = true
       pendingSave.value = false
       
-      console.log(`💾 Store: Saving ${sessions.value.length} conversation sessions to SQLite...`)
+      console.log(`💾 Store: [${saveId}] Saving ${sessions.value.length} conversation sessions to SQLite...`)
       
       await invoke('save_conversations', {
         payload: { conversations: sessions.value }
       })
-      console.log(`💾 Store: Successfully saved ${sessions.value.length} conversation sessions`)
+      console.log(`💾 Store: [${saveId}] Successfully saved ${sessions.value.length} conversation sessions`)
       
     } catch (error) {
-      console.error('💾 Store: Failed to save conversation sessions:', error)
-      throw error // Re-throw to let caller handle
+      console.error(`💾 Store: [${saveId}] Failed to save conversation sessions:`, error)
+      // Don't throw error unless it's a critical failure
+      // Most save errors should be recoverable
     } finally {
       isSaving.value = false
       
-      // If there was a pending save, execute it now
+      // If there was a pending save, execute it now with a delay
       if (pendingSave.value) {
-        console.log('💾 Store: Executing queued save')
-        setTimeout(() => saveSessions().catch(console.error), 100)
+        console.log(`💾 Store: [${saveId}] Executing queued save`)
+        setTimeout(() => saveSessions().catch(console.error), 500) // Increased delay
       }
     }
   }
@@ -324,7 +326,7 @@ export const useConversationStore = defineStore('conversation', () => {
     }
   }
 
-  const addMessage = (messageData: Omit<ConversationMessage, 'id'>) => {
+  const addMessage = async (messageData: Omit<ConversationMessage, 'id'>) => {
     // Don't automatically create sessions - require explicit session management
     if (!currentSession.value) {
       console.error('❌ Attempting to add message without active session:', messageData)
@@ -350,11 +352,26 @@ export const useConversationStore = defineStore('conversation', () => {
       ...messageData
     }
 
+    // Add message to local state immediately
     currentSession.value.messages.push(message)
     
-    // Immediately queue the message for saving
-    messagePersistence.queueMessage(message, currentSession.value.id)
-    console.log(`💾 Queued message for immediate save: ${message.id}`)
+    // Save message directly to backend (no dual system)
+    try {
+      message.persistenceState = 'saving'
+      const success = await messagePersistence.saveMessageImmediately(message, currentSession.value.id)
+      
+      if (success) {
+        message.persistenceState = 'saved'
+        console.log(`✅ Message saved immediately: ${message.id}`)
+      } else {
+        message.persistenceState = 'failed'
+        console.log(`❌ Message save failed: ${message.id}`)
+      }
+    } catch (error) {
+      message.persistenceState = 'failed'
+      message.saveError = error instanceof Error ? error.message : 'Unknown error'
+      console.error(`❌ Message save error: ${message.id}`, error)
+    }
     
     // If this is a resumed session (has endTime), update it to show continued activity
     if (currentSession.value.endTime) {

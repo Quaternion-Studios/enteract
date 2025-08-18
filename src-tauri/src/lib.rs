@@ -92,14 +92,17 @@ use mcp::{
 // Import SQLite data storage commands
 use data::{
     // Database initialization and management
-    initialize_database, get_database_info, cleanup_legacy_files,
+    initialize_database, get_database_info, cleanup_legacy_files, check_database_health,
     // Chat operations (Claude conversations)
     save_chat_sessions, load_chat_sessions,
     // Conversation operations (Audio conversations)
     save_conversations, load_conversations, delete_conversation, clear_all_conversations,
     save_conversation_message, batch_save_conversation_messages,
     update_conversation_message, delete_conversation_message,
-    save_conversation_insight, get_conversation_insights, ping_backend
+    save_conversation_insight, get_conversation_insights, ping_backend,
+    // Logging commands
+    get_database_logs, get_database_logs_by_operation, get_database_logs_by_level,
+    get_database_log_stats, clear_database_logs
 };
 
 #[tauri::command]
@@ -150,13 +153,48 @@ pub fn run() {
             let mcp_sessions = create_mcp_session_manager();
             app.manage(mcp_sessions);
             
-            // Initialize SQLite database on first run
+            // Initialize SQLite database with comprehensive health checks
             let app_handle_db = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = crate::data::initialize_database(app_handle_db) {
-                    eprintln!("Failed to initialize database: {}", e);
-                } else {
-                    println!("✅ Database initialized successfully");
+                // First check database health
+                match crate::data::check_database_health(app_handle_db.clone()) {
+                    Ok(health) => {
+                        if health.is_healthy {
+                            println!("✅ Database is already healthy and ready");
+                        } else {
+                            println!("⚠️ Database health issues detected: {:?}", health.errors);
+                            println!("🔧 Attempting to initialize/repair database...");
+                            
+                            match crate::data::initialize_database(app_handle_db.clone()) {
+                                Ok(result) => {
+                                    println!("✅ Database initialization completed: {}", result);
+                                    
+                                    // Verify health after initialization
+                                    match crate::data::check_database_health(app_handle_db) {
+                                        Ok(post_health) => {
+                                            if post_health.is_healthy {
+                                                println!("🎉 Database is now healthy after initialization");
+                                            } else {
+                                                eprintln!("❌ Database still has issues after initialization: {:?}", post_health.errors);
+                                            }
+                                        }
+                                        Err(e) => eprintln!("❌ Failed to verify database health after init: {}", e),
+                                    }
+                                }
+                                Err(e) => eprintln!("❌ Database initialization failed: {}", e),
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Database health check failed: {}", e);
+                        println!("🔧 Attempting emergency database initialization...");
+                        
+                        if let Err(init_err) = crate::data::initialize_database(app_handle_db) {
+                            eprintln!("❌ Emergency database initialization also failed: {}", init_err);
+                        } else {
+                            println!("✅ Emergency database initialization succeeded");
+                        }
+                    }
                 }
             });
             
@@ -227,6 +265,7 @@ pub fn run() {
             initialize_database,
             get_database_info,
             cleanup_legacy_files,
+            check_database_health,
             
             // Chat data storage (Claude conversations)
             save_chat_sessions,
@@ -327,6 +366,13 @@ pub fn run() {
             
             // Backend connectivity
             ping_backend,
+            
+            // Database logging
+            get_database_logs,
+            get_database_logs_by_operation,
+            get_database_logs_by_level,
+            get_database_log_stats,
+            clear_database_logs,
 
         ])
         .run(tauri::generate_context!())

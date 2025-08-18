@@ -123,6 +123,19 @@ pub struct ConversationMessage {
     pub content: String,
     pub timestamp: i64,
     pub confidence: Option<f64>,
+    // Additional fields for frontend compatibility
+    #[serde(rename = "isPreview", skip_serializing_if = "Option::is_none")]
+    pub is_preview: Option<bool>,
+    #[serde(rename = "isTyping", skip_serializing_if = "Option::is_none")]
+    pub is_typing: Option<bool>,
+    #[serde(rename = "persistenceState", skip_serializing_if = "Option::is_none")]
+    pub persistence_state: Option<String>,
+    #[serde(rename = "retryCount", skip_serializing_if = "Option::is_none")]
+    pub retry_count: Option<i32>,
+    #[serde(rename = "lastSaveAttempt", skip_serializing_if = "Option::is_none")]
+    pub last_save_attempt: Option<i64>,
+    #[serde(rename = "saveError", skip_serializing_if = "Option::is_none")]
+    pub save_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
