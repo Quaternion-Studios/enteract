@@ -1,4 +1,5 @@
-use crate::enhanced_rag_system::{EnhancedRagSystem, EnhancedDocument, EnhancedDocumentChunk, EnhancedRagSettings};
+use super::system::EnhancedRagSystem;
+use super::types::{EnhancedDocument, EnhancedDocumentChunk, EnhancedRagSettings, DocumentValidationResult, StorageStats, EmbeddingStatus, SearchResponse};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

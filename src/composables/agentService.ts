@@ -3,7 +3,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { SessionManager } from './sessionManager'
 import { ContextManager } from './contextManager'
-import { enhancedRagService } from '../services/enhancedRagService'
+import { ragClient } from '../services/rag/ragClient'
+import { RagContextManager } from '../services/rag/contextManager'
 import { MCPService } from './mcpService'
 
 let messageIdCounter = 1
@@ -374,29 +375,45 @@ export class AgentService {
         }
       }, 2000)
       
-      // Perform RAG search if documents are selected
-      let ragContext = ''
+      // Smart RAG Search and Context Management
+      let ragContextResult = { context: '', tokensUsed: 0, chunksIncluded: 0, chunksDropped: 0 }
+      let enhancedPrompt = userMessage
+      
       if (selectedDocumentIds.length > 0) {
         try {
           console.log(`🔍 Performing RAG search with ${selectedDocumentIds.length} selected documents`)
           
-          // Ensure documents are ready for search before proceeding
-          const readinessMap = await enhancedRagService.ensureDocumentsReadyForSearch(selectedDocumentIds)
-          const readyDocs = selectedDocumentIds.filter(id => readinessMap[id] === 'ready')
-          const pendingDocs = selectedDocumentIds.filter(id => 
-            ['embedding_queued', 'embedding_processing', 'embedding_retry_queued'].includes(readinessMap[id])
-          )
+          // Validate document readiness
+          const validationResult = await ragClient.validateDocuments(selectedDocumentIds)
+          console.log(`📊 Document validation: ${validationResult.ready_documents.length} ready, ${validationResult.pending_documents.length} pending`)
           
-          console.log(`📊 Document readiness: ${readyDocs.length} ready, ${pendingDocs.length} pending`)
-          
-          if (readyDocs.length === 0 && pendingDocs.length > 0) {
+          if (validationResult.ready_documents.length === 0 && validationResult.pending_documents.length > 0) {
             console.log('⏳ All selected documents are still processing embeddings, proceeding without RAG context')
           } else {
-            const ragResults = await enhancedRagService.searchDocuments(userMessage, selectedDocumentIds)
+            // Perform search with ready documents
+            const searchDocuments = validationResult.ready_documents.length > 0 
+              ? validationResult.ready_documents 
+              : selectedDocumentIds
+              
+            const ragChunks = await ragClient.searchDocuments(userMessage, searchDocuments)
             
-            if (ragResults.length > 0) {
-              ragContext = enhancedRagService.formatContextForAI(ragResults)
-              console.log(`📚 RAG context retrieved: ${ragResults.length} chunks, ${ragContext.length} characters`)
+            if (ragChunks.length > 0) {
+              // Calculate optimal token allocation
+              const tokenAllocation = RagContextManager.calculateOptimalTokenAllocation(ragChunks, 4000)
+              
+              // Format context with smart token management
+              ragContextResult = RagContextManager.formatContextForAI(ragChunks, tokenAllocation.ragTokens)
+              
+              console.log(`📚 Smart RAG context: ${ragContextResult.chunksIncluded}/${ragChunks.length} chunks, ${ragContextResult.tokensUsed} tokens`)
+              
+              if (ragContextResult.chunksDropped > 0) {
+                console.log(`⚠️ Dropped ${ragContextResult.chunksDropped} chunks due to token limits`)
+              }
+              
+              // Prepare enhanced prompt
+              if (ragContextResult.context) {
+                enhancedPrompt = `Context from documents:\n${ragContextResult.context}\n\nUser question: ${userMessage}\n\nPlease answer the question using the provided document context when relevant.`
+              }
             } else {
               console.log('📚 No relevant content found in selected documents')
             }
@@ -407,18 +424,13 @@ export class AgentService {
         }
       }
       
-      // Generate truncated context for AI (max 4000 tokens, reserve space for RAG if needed)
-      const maxTokens = ragContext ? 3000 : 4000 // Reserve space for RAG context
-      const truncatedContext = ContextManager.getLimitedContext(SessionManager.getCurrentChatHistory().value, maxTokens)
+      // Generate conversation context with remaining tokens
+      const remainingTokens = 4000 - ragContextResult.tokensUsed
+      const truncatedContext = ContextManager.getLimitedContext(SessionManager.getCurrentChatHistory().value, remainingTokens)
       
-      console.log(`📊 Context prepared: ${truncatedContext.length} messages, estimated ~${truncatedContext.reduce((sum, msg) => sum + ContextManager.estimateTokens(msg.content), 0)} tokens`)
+      console.log(`📊 Token allocation: ${ragContextResult.tokensUsed} RAG + ${ContextManager.estimateTokens(truncatedContext.map(m => m.content).join(''))} conversation = ${ragContextResult.tokensUsed + ContextManager.estimateTokens(truncatedContext.map(m => m.content).join(''))} total`)
       
-      // Prepare enhanced prompt with RAG context if available
-      const enhancedPrompt = ragContext 
-        ? `Context from documents:\n${ragContext}\n\nUser question: ${userMessage}\n\nPlease answer the question using the provided document context when relevant.`
-        : userMessage
-      
-      if (ragContext) {
+      if (ragContextResult.context) {
         console.log(`📚 Enhanced prompt with RAG context: ${enhancedPrompt.length} characters`)
       }
       
