@@ -11,10 +11,7 @@ mod speech;
 mod ollama;
 mod screenshot;
 mod file_handler;
-mod data_store;
-mod sqlite_data_store; // SQLite data storage implementation
-mod migration_commands; // SQLite migration commands
-mod hybrid_data_store; // Hybrid JSON/SQLite data storage
+mod data; // Data storage module (JSON, SQLite, migration, hybrid)
 mod audio_loopback; // New audio loopback module
 mod system_prompts; // System prompts module
 mod system_info; // System information module
@@ -56,7 +53,7 @@ use file_handler::{
     upload_file_base64, validate_file_upload, get_file_upload_config,
     process_clipboard_image, cleanup_temp_files
 };
-use data_store::{
+use data::{
     save_chat_sessions, load_chat_sessions, save_conversations, load_conversations, 
     delete_conversation, clear_all_conversations, restore_from_backup, list_backups,
     save_conversation_message, batch_save_conversation_messages, 
@@ -98,14 +95,12 @@ use mcp::{
     execute_approved_plan, MCPSessionManager
 };
 
-// Import migration commands
-use migration_commands::{
+// Import migration and hybrid data store commands
+use data::{
+    // Migration commands
     check_migration_status, migrate_to_sqlite, backup_json_files,
-    get_sqlite_stats, cleanup_json_files
-};
-
-// Import hybrid data store commands
-use hybrid_data_store::{
+    get_sqlite_stats, cleanup_json_files,
+    // Hybrid data store commands
     save_chat_sessions_hybrid, load_chat_sessions_hybrid,
     save_conversations_hybrid, load_conversations_hybrid,
     delete_conversation_hybrid, clear_all_conversations_hybrid,

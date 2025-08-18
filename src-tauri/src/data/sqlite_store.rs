@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 use chrono::{DateTime, Utc};
-use crate::data_store::{
+use crate::data::json_store::{
     ChatMessage, ChatSession, MessageAttachment, ThinkingProcess, ThinkingStep, MessageMetadata,
     ConversationSession, ConversationMessage, ConversationInsight,
     SaveChatsPayload, LoadChatsResponse, SaveConversationsPayload, LoadConversationsResponse
@@ -50,7 +50,7 @@ impl SqliteDataStore {
 
     fn initialize_database(&mut self) -> Result<()> {
         // Read and execute schema
-        let schema = include_str!("../../migration_schema.sql");
+        let schema = include_str!("../../../migration_schema.sql");
         self.connection.execute_batch(schema)?;
         
         // Check if migration is needed

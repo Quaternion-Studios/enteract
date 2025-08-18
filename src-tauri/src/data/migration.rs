@@ -1,5 +1,5 @@
 use tauri::{AppHandle, Manager, command};
-use crate::sqlite_data_store::{SqliteDataStore, MigrationResult};
+use crate::data::sqlite_store::{SqliteDataStore, MigrationResult};
 use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -106,6 +106,18 @@ import MigrationHelper from '@/components/MigrationHelper.vue'
 
 ## 🔧 Technical Implementation
 
+### Organized Module Structure
+The data storage system is now organized in a clean module structure:
+
+```
+src-tauri/src/data/
+├── mod.rs              # Public API and exports
+├── json_store.rs       # Legacy JSON storage
+├── sqlite_store.rs     # Modern SQLite storage  
+├── migration.rs        # Migration utilities
+└── hybrid_store.rs     # Auto-selecting backend
+```
+
 ### Hybrid Data Store
 The application now uses a hybrid approach that automatically selects the appropriate storage backend:
 
