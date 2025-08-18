@@ -135,7 +135,7 @@ onMounted(async () => {
     document.addEventListener('mouseup', handleDragEnd)
   }
   
-  await store.initializeSpeechTranscription('small')
+  await store.initializeSpeechTranscription('tiny')
   
   await resizeWindow(false, false, false, false, false)
   
