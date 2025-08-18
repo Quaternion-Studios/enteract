@@ -85,27 +85,27 @@ export function useMessagePersistence() {
       
       // Debug logging
       console.log('📤 Sending message to backend:', {
-        session_id: sessionId,
-        message_id: message.id,
-        message_type: message.type
+        sessionId: sessionId,
+        messageId: message.id,
+        messageType: message.type
       })
       
       await invoke('save_conversation_message', {
-        session_id: sessionId, // Fixed: backend expects snake_case
+        sessionId: sessionId, // Tauri expects camelCase and converts to snake_case
         message: {
           id: message.id,
-          message_type: message.type, // Backend expects message_type
+          type: message.type, // Serde expects 'type' due to rename attribute
           source: message.source,
           content: message.content,
           timestamp: message.timestamp,
           confidence: message.confidence,
-          // Include optional fields to prevent serialization issues
-          is_preview: message.isPreview || false,
-          is_typing: message.isTyping || false,
-          persistence_state: message.persistenceState,
-          retry_count: message.retryCount || 0,
-          last_save_attempt: message.lastSaveAttempt,
-          save_error: message.saveError
+          // Optional fields with correct naming for serde
+          isPreview: message.isPreview || false,
+          isTyping: message.isTyping || false,
+          persistenceState: message.persistenceState,
+          retryCount: message.retryCount || 0,
+          lastSaveAttempt: message.lastSaveAttempt,
+          saveError: message.saveError
         }
       })
       
@@ -133,21 +133,21 @@ export function useMessagePersistence() {
       const startTime = Date.now()
       
       await invoke('batch_save_conversation_messages', {
-        session_id: batch.sessionId, // Fixed: backend expects snake_case
+        sessionId: batch.sessionId, // Tauri expects camelCase and converts to snake_case
         messages: batch.messages.map(msg => ({
           id: msg.id,
-          message_type: msg.type, // Backend expects message_type
+          type: msg.type, // Serde expects 'type' due to rename attribute
           source: msg.source,
           content: msg.content,
           timestamp: msg.timestamp,
           confidence: msg.confidence,
-          // Include optional fields
-          is_preview: msg.isPreview || false,
-          is_typing: msg.isTyping || false,
-          persistence_state: msg.persistenceState,
-          retry_count: msg.retryCount || 0,
-          last_save_attempt: msg.lastSaveAttempt,
-          save_error: msg.saveError
+          // Optional fields with correct naming for serde
+          isPreview: msg.isPreview || false,
+          isTyping: msg.isTyping || false,
+          persistenceState: msg.persistenceState,
+          retryCount: msg.retryCount || 0,
+          lastSaveAttempt: msg.lastSaveAttempt,
+          saveError: msg.saveError
         }))
       })
       
@@ -392,8 +392,8 @@ export function useMessagePersistence() {
   ): Promise<boolean> => {
     try {
       await invoke('update_conversation_message', {
-        session_id: sessionId, // Fixed: backend expects snake_case
-        message_id: messageId, // Fixed: backend expects snake_case
+        sessionId: sessionId, // Tauri expects camelCase and converts to snake_case
+        messageId: messageId, // Tauri expects camelCase and converts to snake_case
         updates: {
           content: updates.content,
           confidence: updates.confidence,
@@ -414,8 +414,8 @@ export function useMessagePersistence() {
   ): Promise<boolean> => {
     try {
       await invoke('delete_conversation_message', {
-        session_id: sessionId, // Fixed: backend expects snake_case
-        message_id: messageId  // Fixed: backend expects snake_case
+        sessionId: sessionId, // Tauri expects camelCase and converts to snake_case
+        messageId: messageId  // Tauri expects camelCase and converts to snake_case
       })
       return true
     } catch (error) {
