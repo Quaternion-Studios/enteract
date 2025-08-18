@@ -1,7 +1,5 @@
 // mcpService.ts - Handles MCP (Model Context Protocol) operations and tool calling
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
-import { ref } from 'vue'
 import { SessionManager } from './sessionManager'
 
 let messageIdCounter = 1000 // Use higher counter to avoid conflicts
@@ -102,7 +100,7 @@ export class MCPService {
   }
 
   // Process @enteract message and route to appropriate MCP tools
-  static async processEnteractMessage(message: string, selectedModel: string | null) {
+  static async processEnteractMessage(message: string, _selectedModel: string | null) {
     console.log('🔧 [MCP] Processing @enteract message:', message)
     try {
       // Remove @enteract prefix and trim
@@ -366,7 +364,6 @@ export class MCPService {
           })
         }
       }
-      }
     }
 
     // Type tools
@@ -426,6 +423,7 @@ export class MCPService {
         })
       }
     }
+
     return actions
   }
 
