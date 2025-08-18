@@ -310,11 +310,13 @@ const toggleMicrophone = async () => {
         // Wait for the session creation save to complete
         await conversationStore.waitForSaveCompletion()
         console.log('🆕 ConversationalWindow: Session creation save completed')
-      } else if (conversationStore.currentSession.endTime) {
-        // Resume the current session if it's completed
-        console.log('▶️ ConversationalWindow: Resuming completed session:', conversationStore.currentSession.id)
+      } else if (conversationStore.currentSession.endTime || !conversationStore.currentSession.isActive) {
+        // Resume the current session if it's completed OR not active (was only switched to for viewing)
+        console.log('▶️ ConversationalWindow: Resuming session for recording:', conversationStore.currentSession.id)
+        console.log('▶️ ConversationalWindow: Session state - endTime:', !!conversationStore.currentSession.endTime, 'isActive:', conversationStore.currentSession.isActive)
+        
         await conversationStore.resumeSession(conversationStore.currentSession.id)
-        console.log('▶️ ConversationalWindow: Session resumed successfully')
+        console.log('▶️ ConversationalWindow: Session resumed and ready for recording')
         
         // Wait for the resume save to complete
         await conversationStore.waitForSaveCompletion()

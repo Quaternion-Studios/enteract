@@ -64,19 +64,12 @@ export function useConversationManagement() {
     }
   }
   
-  const resumeConversation = async (conversationId: string, forEditing = false) => {
+  const resumeConversation = async (conversationId: string) => {
     try {
-      if (forEditing) {
-        // Resume session for editing/adding new messages
-        console.log('▶️ ConversationManagement: Resuming session for editing:', conversationId)
-        await conversationStore.resumeSession(conversationId)
-        console.log('▶️ ConversationManagement: Session resumed for editing:', conversationId)
-      } else {
-        // Just switch to view the session
-        console.log('🔄 ConversationManagement: Switching to session for viewing:', conversationId)
-        conversationStore.switchToSession(conversationId)
-        console.log('🔄 ConversationManagement: Switched to session:', conversationId)
-      }
+      // Always resume for editing when selected from drawer - this ensures proper session context
+      console.log('▶️ ConversationManagement: Resuming session for editing/continuation:', conversationId)
+      await conversationStore.resumeSession(conversationId)
+      console.log('▶️ ConversationManagement: Session resumed and ready for new messages:', conversationId)
       
       // Wait for any pending saves to complete
       await conversationStore.waitForSaveCompletion()
@@ -85,6 +78,19 @@ export function useConversationManagement() {
       console.log('🔄 ConversationManagement: Conversations reloaded after session operation')
     } catch (error) {
       console.error('Failed to resume conversation:', error)
+      throw error
+    }
+  }
+  
+  const switchToConversation = async (conversationId: string) => {
+    try {
+      // Just switch to view the session without resuming for editing
+      console.log('🔄 ConversationManagement: Switching to session for viewing:', conversationId)
+      await conversationStore.switchToSession(conversationId)
+      console.log('🔄 ConversationManagement: Switched to session:', conversationId)
+    } catch (error) {
+      console.error('Failed to switch to conversation:', error)
+      throw error
     }
   }
   
@@ -133,6 +139,7 @@ export function useConversationManagement() {
     loadConversations,
     createNewConversation,
     resumeConversation,
+    switchToConversation,
     renameConversation,
     deleteConversation
   }

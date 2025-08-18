@@ -179,6 +179,38 @@ pub fn get_conversation_insights(
     }
 }
 
+// Session metadata operations  
+#[command]
+pub fn update_session_metadata(
+    app_handle: AppHandle,
+    session_id: String,
+    name: Option<String>,
+    end_time: Option<Option<i64>>,
+    is_active: Option<bool>,
+) -> Result<(), String> {
+    match ConversationStorage::new(&app_handle) {
+        Ok(mut storage) => {
+            let name_ref = name.as_deref();
+            storage.update_session_metadata(&session_id, name_ref, end_time, is_active)
+                .map_err(|e| format!("Failed to update session metadata: {}", e))
+        }
+        Err(e) => Err(format!("Failed to initialize conversation storage: {}", e))
+    }
+}
+
+#[command]
+pub fn update_session_active_state(
+    app_handle: AppHandle,
+    session_id: String,
+    is_active: bool,
+) -> Result<(), String> {
+    match ConversationStorage::new(&app_handle) {
+        Ok(mut storage) => storage.update_session_active_state(&session_id, is_active)
+            .map_err(|e| format!("Failed to update session active state: {}", e)),
+        Err(e) => Err(format!("Failed to initialize conversation storage: {}", e))
+    }
+}
+
 #[command]
 pub fn ping_backend() -> Result<String, String> {
     Ok("pong".to_string())

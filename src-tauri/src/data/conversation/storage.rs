@@ -112,14 +112,62 @@ impl ConversationStorage {
     }
 
     pub fn save_conversations(&mut self, payload: SaveConversationsPayload) -> Result<()> {
-        let tx = self.connection.transaction()?;
-
-        // Clear existing data (full replacement for now - can be optimized later)
-        tx.execute("DELETE FROM conversation_sessions", params![])?;
-
-        let sessions_count = payload.conversations.len();
+        // Use incremental updates instead of full table replacement to avoid race conditions
+        println!("🔄 Using incremental session updates for {} sessions", payload.conversations.len());
+        
+        let mut updated_count = 0;
+        let mut created_count = 0;
+        
         for session in payload.conversations {
-            // Insert session
+            let session_id = session.id.clone(); // Clone for error message
+            match self.save_or_update_session(session) {
+                Ok(was_created) => {
+                    if was_created {
+                        created_count += 1;
+                    } else {
+                        updated_count += 1;
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to save session {}: {}", session_id, e);
+                    return Err(e);
+                }
+            }
+        }
+        
+        println!("✅ Session operations complete: {} updated, {} created", updated_count, created_count);
+        Ok(())
+    }
+
+    /// Save or update a single session with all its data incrementally
+    pub fn save_or_update_session(&mut self, session: ConversationSession) -> Result<bool> {
+        let tx = self.connection.transaction()?;
+        
+        // Check if session exists
+        let session_exists: bool = match tx.query_row(
+            "SELECT 1 FROM conversation_sessions WHERE id = ? LIMIT 1",
+            params![session.id],
+            |_| Ok(true)
+        ) {
+            Ok(_) => true,
+            Err(rusqlite::Error::QueryReturnedNoRows) => false,
+            Err(e) => return Err(e),
+        };
+        
+        let was_created = !session_exists;
+        
+        if session_exists {
+            // Update existing session metadata only
+            tx.execute(
+                "UPDATE conversation_sessions SET name = ?, start_time = ?, end_time = ?, is_active = ? WHERE id = ?",
+                params![
+                    session.name, session.start_time, session.end_time,
+                    if session.is_active { 1 } else { 0 }, session.id
+                ]
+            )?;
+            println!("🔄 Updated session metadata: {}", session.id);
+        } else {
+            // Insert new session
             tx.execute(
                 "INSERT INTO conversation_sessions (id, name, start_time, end_time, is_active) VALUES (?, ?, ?, ?, ?)",
                 params![
@@ -127,34 +175,96 @@ impl ConversationStorage {
                     if session.is_active { 1 } else { 0 }
                 ]
             )?;
+            println!("🆕 Created new session: {}", session.id);
+        }
 
-            // Insert messages
-            for message in session.messages {
-                tx.execute(
-                    "INSERT INTO conversation_messages (id, session_id, type, source, content, timestamp, confidence) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    params![
-                        message.id, session.id, message.message_type, message.source,
-                        message.content, message.timestamp, message.confidence
-                    ]
-                )?;
-            }
+        // Handle messages incrementally (avoid conflicts with individual message saves)
+        for message in session.messages {
+            // Use INSERT OR IGNORE to avoid conflicts with concurrent individual message saves
+            tx.execute(
+                "INSERT OR IGNORE INTO conversation_messages (id, session_id, type, source, content, timestamp, confidence) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    message.id, session.id, message.message_type, message.source,
+                    message.content, message.timestamp, message.confidence
+                ]
+            )?;
+        }
 
-            // Insert insights
-            for insight in session.insights {
-                tx.execute(
-                    "INSERT INTO conversation_insights (id, session_id, text, timestamp, context_length, insight_type)
-                     VALUES (?, ?, ?, ?, ?, ?)",
-                    params![
-                        insight.id, session.id, insight.text, insight.timestamp,
-                        insight.context_length, insight.insight_type
-                    ]
-                )?;
-            }
+        // Handle insights incrementally
+        for insight in session.insights {
+            tx.execute(
+                "INSERT OR REPLACE INTO conversation_insights (id, session_id, text, timestamp, context_length, insight_type)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                params![
+                    insight.id, session.id, insight.text, insight.timestamp,
+                    insight.context_length, insight.insight_type
+                ]
+            )?;
         }
 
         tx.commit()?;
-        println!("✅ Saved {} conversation sessions to SQLite", sessions_count);
+        Ok(was_created)
+    }
+
+    /// Update only session metadata fields (optimized for session state changes)
+    pub fn update_session_metadata(&mut self, session_id: &str, name: Option<&str>, end_time: Option<Option<i64>>, is_active: Option<bool>) -> Result<()> {
+        let mut set_clauses = Vec::new();
+        let mut params = Vec::new();
+        
+        if let Some(name) = name {
+            set_clauses.push("name = ?");
+            params.push(rusqlite::types::Value::Text(name.to_string()));
+        }
+        if let Some(end_time) = end_time {
+            set_clauses.push("end_time = ?");
+            match end_time {
+                Some(time) => params.push(rusqlite::types::Value::Integer(time)),
+                None => params.push(rusqlite::types::Value::Null),
+            }
+        }
+        if let Some(is_active) = is_active {
+            set_clauses.push("is_active = ?");
+            params.push(rusqlite::types::Value::Integer(if is_active { 1 } else { 0 }));
+        }
+        
+        if set_clauses.is_empty() {
+            return Ok(()); // No updates to apply
+        }
+        
+        // Add session_id for WHERE clause
+        params.push(rusqlite::types::Value::Text(session_id.to_string()));
+        
+        let sql = format!(
+            "UPDATE conversation_sessions SET {} WHERE id = ?",
+            set_clauses.join(", ")
+        );
+        
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+        let affected = self.connection.execute(&sql, param_refs.as_slice())?;
+        
+        if affected == 0 {
+            println!("⚠️ No session found to update: {}", session_id);
+        } else {
+            println!("✅ Updated session metadata for: {}", session_id);
+        }
+        
+        Ok(())
+    }
+
+    /// Activate/deactivate sessions (common operation during session switching)
+    pub fn update_session_active_state(&mut self, session_id: &str, is_active: bool) -> Result<()> {
+        let affected = self.connection.execute(
+            "UPDATE conversation_sessions SET is_active = ? WHERE id = ?",
+            params![if is_active { 1 } else { 0 }, session_id]
+        )?;
+        
+        if affected == 0 {
+            println!("⚠️ No session found to update active state: {}", session_id);
+        } else {
+            println!("✅ Updated session {} active state to: {}", session_id, is_active);
+        }
+        
         Ok(())
     }
 

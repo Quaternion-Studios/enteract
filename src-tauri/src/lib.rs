@@ -99,7 +99,8 @@ use data::{
     save_conversations, load_conversations, delete_conversation, clear_all_conversations,
     save_conversation_message, batch_save_conversation_messages,
     update_conversation_message, delete_conversation_message,
-    save_conversation_insight, get_conversation_insights, ping_backend,
+    save_conversation_insight, get_conversation_insights,
+    update_session_metadata, update_session_active_state, ping_backend,
     // Logging commands
     get_database_logs, get_database_logs_by_operation, get_database_logs_by_level,
     get_database_log_stats, clear_database_logs
@@ -297,6 +298,8 @@ pub fn run() {
             batch_save_conversation_messages,
             update_conversation_message,
             delete_conversation_message,
+            update_session_metadata,
+            update_session_active_state,
             ping_backend,
             
             // Conversation insights

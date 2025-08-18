@@ -177,8 +177,9 @@ export const useConversationStore = defineStore('conversation', () => {
       currentSession.value = session
       console.log('🆕 Store: Session created successfully:', session.id)
       
-      // Force immediate save of new session and wait for completion
-      await saveSessions(true)
+      // For new sessions, use the existing save method which handles creation
+      await saveSessions(true) // Force immediate save for new session creation
+      console.log('✅ Store: New session created and saved')
       
       return session
     } finally {
@@ -246,9 +247,14 @@ export const useConversationStore = defineStore('conversation', () => {
         // and allows for continued interaction with the completed session
         console.log(`🏁 Store: Session completed but remains accessible: ${targetSession.id}`)
         
-        // Force immediate save when completing session to ensure persistence
-        console.log('💾 Store: Force saving completed session with verification')
-        await saveSessions(true) // Force immediate save
+        // Use incremental update instead of full save to avoid race conditions
+        await invoke('update_session_metadata', {
+          sessionId: targetSession.id,
+          name: null, // Don't update name
+          endTime: targetSession.endTime,
+          isActive: targetSession.isActive
+        })
+        console.log('✅ Store: Session completion state updated incrementally')
         
         console.log('🏁 Store: Session completion operation finished successfully')
         
@@ -262,21 +268,33 @@ export const useConversationStore = defineStore('conversation', () => {
     }
   }
 
-  const switchToSession = (sessionId: string) => {
+  const switchToSession = async (sessionId: string) => {
     const session = sessions.value.find(s => s.id === sessionId)
     if (session) {
-      console.log('🔄 Store: Switching to session:', sessionId)
+      console.log('🔄 Store: Switching to session for viewing:', sessionId)
       
-      // Simply deactivate current session without ending it (no endTime)
-      if (currentSession.value) {
-        console.log('🔄 Store: Deactivating current session:', currentSession.value.id)
-        currentSession.value.isActive = false
+      try {
+        // Deactivate current session without ending it (no endTime)
+        if (currentSession.value) {
+          console.log('🔄 Store: Deactivating current session:', currentSession.value.id)
+          currentSession.value.isActive = false
+          
+          // Update database incrementally
+          await invoke('update_session_active_state', {
+            sessionId: currentSession.value.id,
+            isActive: false
+          })
+        }
+        
+        // Set as current session but don't activate it yet (viewing mode)
+        // The session will be properly activated when recording starts
+        currentSession.value = session
+        console.log('🔄 Store: Session switched for viewing (not yet active for recording)')
+      } catch (error) {
+        console.error('🔄 Store: Failed to update session active state:', error)
+        // Continue anyway since the UI state change is the priority
+        currentSession.value = session
       }
-      
-      // Activate the target session
-      session.isActive = true
-      currentSession.value = session
-      console.log('🔄 Store: Session switched successfully')
     } else {
       console.error('🔄 Store: Session not found:', sessionId)
     }
@@ -292,7 +310,7 @@ export const useConversationStore = defineStore('conversation', () => {
       autoSaveEnabled.value = false
       
       try {
-        // Complete current session if there is one
+        // Complete current session if there is one and it's different
         if (currentSession.value && currentSession.value.id !== sessionId) {
           console.log('🏁 Store: Completing current session before resume')
           await completeSession()
@@ -300,18 +318,26 @@ export const useConversationStore = defineStore('conversation', () => {
         
         // Reactivate the target session
         session.isActive = true
-        // Clear endTime to indicate it's active again
-        session.endTime = undefined
-        // Update the session name to show it's been resumed
-        if (!session.name.includes('(Resumed)')) {
-          session.name += ' (Resumed)'
+        // Clear endTime to indicate it's active again (handles completed sessions)
+        if (session.endTime) {
+          session.endTime = undefined
+          // Update the session name to show it's been resumed only if it was completed
+          if (!session.name.includes('(Resumed)')) {
+            session.name += ' (Resumed)'
+          }
         }
         
         currentSession.value = session
-        console.log('▶️ Store: Session resumed successfully and ready for new messages')
+        console.log('▶️ Store: Session activated and ready for recording new messages')
         
-        // Force immediate save to persist the resume state
-        await saveSessions(true)
+        // Use incremental session update instead of full save to avoid race conditions
+        await invoke('update_session_metadata', {
+          sessionId: session.id,
+          name: session.name,
+          endTime: session.endTime,
+          isActive: session.isActive
+        })
+        console.log('✅ Store: Session metadata updated incrementally')
         
       } catch (error) {
         console.error('▶️ Store: Failed to resume session properly:', error)
@@ -482,9 +508,14 @@ export const useConversationStore = defineStore('conversation', () => {
         session.name = trimmedName
         console.log(`✏️ Store: Session renamed from "${oldName}" to "${trimmedName}": ${sessionId}`)
         
-        // Force immediate save to persist the rename
-        await saveSessions(true)
-        console.log(`✏️ Store: Rename saved successfully`)
+        // Use incremental update to persist the rename
+        await invoke('update_session_metadata', {
+          sessionId: sessionId,
+          name: trimmedName,
+          endTime: null, // Don't update end time
+          isActive: null // Don't update active state
+        })
+        console.log(`✏️ Store: Rename saved incrementally`)
         
       } finally {
         // Re-enable auto-save

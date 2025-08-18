@@ -31,6 +31,8 @@ pub use conversation::{
     delete_conversation_message,
     save_conversation_insight,
     get_conversation_insights,
+    update_session_metadata,
+    update_session_active_state,
     ping_backend,
 };
 
