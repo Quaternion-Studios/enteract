@@ -56,6 +56,21 @@ pub fn save_conversation_message(
     message: ConversationMessage,
 ) -> Result<(), String> {
     println!("📥 save_conversation_message called - session_id: {}, message_id: {}", session_id, message.id);
+    println!("📝 Message details - type: '{}', source: '{}', content length: {}", 
+             message.message_type, message.source, message.content.len());
+    
+    // Validate required fields
+    if message.message_type.is_empty() {
+        let error_msg = format!("Message type is empty for message {}", message.id);
+        println!("❌ {}", error_msg);
+        return Err(error_msg);
+    }
+    
+    if message.source.is_empty() {
+        let error_msg = format!("Message source is empty for message {}", message.id);
+        println!("❌ {}", error_msg);
+        return Err(error_msg);
+    }
     
     match ConversationStorage::new(&app_handle) {
         Ok(mut storage) => {

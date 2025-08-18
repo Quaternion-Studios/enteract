@@ -276,7 +276,8 @@ export function useMessagePersistence() {
             console.log(`✅ Batch saved ${messages.length} messages`)
           }
         } catch (error) {
-          console.error('❌ Failed to save messages:', error)
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+          console.error('❌ Failed to save messages:', errorMessage)
           
           // Move failed messages to retry queue
           requests.forEach(req => {
@@ -284,12 +285,30 @@ export function useMessagePersistence() {
             req.message.persistenceState = 'failed'
             req.message.retryCount = req.retryCount
             req.message.lastSaveAttempt = Date.now()
+            req.message.saveError = errorMessage
+            
+            // Emit error event for UI feedback
+            window.dispatchEvent(new CustomEvent('message-save-error', {
+              detail: {
+                messageId: req.message.id,
+                error: errorMessage,
+                retryCount: req.message.retryCount
+              }
+            }))
             
             if (req.retryCount < MAX_RETRY_COUNT) {
               failedQueue.value.push(req)
             } else {
               console.error(`🚫 Message ${req.message.id} exceeded max retry count`)
               req.message.saveError = 'Max retries exceeded'
+              
+              // Emit final failure event
+              window.dispatchEvent(new CustomEvent('message-save-final-failure', {
+                detail: {
+                  messageId: req.message.id,
+                  error: errorMessage
+                }
+              }))
             }
           })
         }
