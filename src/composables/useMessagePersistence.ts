@@ -87,10 +87,15 @@ export function useMessagePersistence() {
       console.log('📤 Sending message to backend:', {
         sessionId: sessionId,
         messageId: message.id,
-        messageType: message.type
+        messageType: message.type,
+        source: message.source,
+        contentLength: message.content.length,
+        timestamp: message.timestamp
       })
       
-      await invoke('save_conversation_message', {
+      console.log(`🚀 Invoking Tauri command for message: ${message.id}`)
+      
+      const invokeResult = await invoke('save_conversation_message', {
         sessionId: sessionId, // Tauri expects camelCase and converts to snake_case
         message: {
           id: message.id,
@@ -109,8 +114,12 @@ export function useMessagePersistence() {
         }
       })
       
+      console.log(`🎊 Tauri invoke completed successfully for message: ${message.id}`, invokeResult)
+      
       const saveTime = Date.now() - startTime
       updateSaveStats(true, saveTime)
+      
+      console.log(`📊 Save stats updated, returning success for message: ${message.id}`)
       
       return {
         success: true,
@@ -374,31 +383,69 @@ export function useMessagePersistence() {
     sessionId: string
   ): Promise<boolean> => {
     if (!isOnline.value) {
+      console.log('📴 Offline - queueing message for later save')
       queueMessage(message, sessionId)
       return false
     }
     
-    message.persistenceState = 'saving'
-    const result = await saveMessageToBackend(message, sessionId)
-    
-    if (result.success) {
-      message.persistenceState = 'saved'
-      message.retryCount = 0
-      message.saveError = undefined
-      return true
-    } else {
+    try {
+      message.persistenceState = 'saving'
+      console.log(`💾 Attempting immediate save for message: ${message.id}`)
+      console.log(`📋 Message state before save: ${message.persistenceState}`)
+      console.log(`🔍 Message object reference:`, message)
+      
+      const result = await saveMessageToBackend(message, sessionId)
+      console.log(`📋 Backend result:`, result)
+      
+      if (result.success) {
+        console.log(`🎯 Setting message ${message.id} to 'saved' state`)
+        message.persistenceState = 'saved'
+        message.retryCount = 0
+        message.saveError = undefined
+        console.log(`📋 Message state after save: ${message.persistenceState}`)
+        console.log(`🔍 Message object after update:`, message)
+        console.log(`✅ Message ${message.id} saved successfully`)
+        
+        // Force trigger reactivity by creating a small delay
+        setTimeout(() => {
+          console.log(`🔄 Delayed check - message ${message.id} state: ${message.persistenceState}`)
+        }, 100)
+        
+        return true
+      } else {
+        console.log(`❌ Backend reported failure for message ${message.id}`)
+        message.persistenceState = 'failed'
+        message.saveError = result.error
+        message.lastSaveAttempt = Date.now()
+        message.retryCount = 1
+        
+        console.error(`❌ Message ${message.id} save failed: ${result.error}`)
+        
+        // Emit error event for UI feedback
+        window.dispatchEvent(new CustomEvent('message-save-error', {
+          detail: {
+            messageId: message.id,
+            error: result.error,
+            retryCount: 1
+          }
+        }))
+        
+        // Queue for retry
+        failedQueue.value.push({
+          message,
+          sessionId,
+          retryCount: 1
+        })
+        
+        processFailedQueue()
+        return false
+      }
+    } catch (error) {
+      console.error(`🚨 Unexpected error in saveMessageImmediately for ${message.id}:`, error)
       message.persistenceState = 'failed'
-      message.saveError = result.error
+      message.saveError = error instanceof Error ? error.message : 'Unexpected error'
       message.lastSaveAttempt = Date.now()
-      
-      // Queue for retry
-      failedQueue.value.push({
-        message,
-        sessionId,
-        retryCount: 1
-      })
-      
-      processFailedQueue()
+      message.retryCount = 1
       return false
     }
   }

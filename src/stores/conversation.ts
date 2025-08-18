@@ -355,22 +355,46 @@ export const useConversationStore = defineStore('conversation', () => {
     // Add message to local state immediately
     currentSession.value.messages.push(message)
     
+    // Get reference to the message that's now in the reactive store
+    const storeMessage = currentSession.value.messages.find(m => m.id === message.id)
+    if (!storeMessage) {
+      console.error(`❌ Store: Could not find message ${message.id} in store after adding`)
+      return null
+    }
+    
     // Save message directly to backend (no dual system)
     try {
-      message.persistenceState = 'saving'
-      const success = await messagePersistence.saveMessageImmediately(message, currentSession.value.id)
+      // Don't set 'saving' state here - let saveMessageImmediately handle it
+      console.log(`🔄 Store: Starting save process for message: ${message.id}`)
+      console.log(`📋 Store: Initial message state: ${storeMessage.persistenceState}`)
+      console.log(`🔍 Store: Working with store message reference:`, storeMessage === message)
+      
+      const success = await messagePersistence.saveMessageImmediately(storeMessage, currentSession.value.id)
+      
+      console.log(`📋 Store: After save attempt - message state: ${storeMessage.persistenceState}`)
+      console.log(`📋 Store: Save success result: ${success}`)
       
       if (success) {
-        message.persistenceState = 'saved'
-        console.log(`✅ Message saved immediately: ${message.id}`)
+        console.log(`✅ Store: Message saved immediately: ${storeMessage.id}`)
+        // Double-check the state is properly set (should already be done by persistence system)
+        if (storeMessage.persistenceState !== 'saved') {
+          console.log(`🔧 Store: Force-updating store message state to 'saved' for ${storeMessage.id}`)
+          storeMessage.persistenceState = 'saved'
+          storeMessage.retryCount = 0
+          storeMessage.saveError = undefined
+        }
       } else {
-        message.persistenceState = 'failed'
-        console.log(`❌ Message save failed: ${message.id}`)
+        console.log(`❌ Store: Message save failed: ${storeMessage.id}`)
+        // Double-check the state is properly set (should already be done by persistence system)
+        if (storeMessage.persistenceState !== 'failed') {
+          console.log(`🔧 Store: Force-updating store message state to 'failed' for ${storeMessage.id}`)
+          storeMessage.persistenceState = 'failed'
+        }
       }
     } catch (error) {
-      message.persistenceState = 'failed'
-      message.saveError = error instanceof Error ? error.message : 'Unknown error'
-      console.error(`❌ Message save error: ${message.id}`, error)
+      console.error(`❌ Store: Unexpected error during save: ${storeMessage.id}`, error)
+      storeMessage.persistenceState = 'failed'
+      storeMessage.saveError = error instanceof Error ? error.message : 'Unknown error'
     }
     
     // If this is a resumed session (has endTime), update it to show continued activity
@@ -384,10 +408,11 @@ export const useConversationStore = defineStore('conversation', () => {
       }
     }
     
-    console.log(`📝 Added message to session ${currentSession.value.id}:`, message.content.substring(0, 50))
+    console.log(`📝 Added message to session ${currentSession.value.id}:`, storeMessage.content.substring(0, 50))
     console.log(`📝 Session now has ${currentSession.value.messages.length} total messages`)
+    console.log(`📋 Final message state before return: ${storeMessage.persistenceState}`)
     
-    return message
+    return storeMessage
   }
 
   const updateMessage = async (messageId: string, updates: Partial<ConversationMessage>) => {
