@@ -12,6 +12,8 @@ export function useRagDocuments() {
   // State - Using enhanced types but keeping backward compatibility
   const documents = ref<EnhancedDocument[]>([])
   const selectedDocumentIds = ref<Set<string>>(new Set())
+  const sessionSelectedDocuments = ref<Map<string, Set<string>>>(new Map()) // Per-session selection
+  const currentSessionId = ref<string | null>(null)
   const isLoading = ref(false)
   const error = ref<string | null>(null)
   const uploadProgress = ref<Map<string, number>>(new Map())
@@ -19,13 +21,51 @@ export function useRagDocuments() {
   const searchResults = ref<EnhancedDocumentChunk[]>([])
   const isSearching = ref(false)
   const useEnhanced = ref(true) // Flag to enable enhanced RAG system
+  const embeddingStatus = ref<Map<string, string>>(new Map())
   
   // Chat-specific document limit
   const CHAT_DOCUMENT_LIMIT = 5
 
+  // Session Management
+  const initializeSession = (sessionId: string) => {
+    currentSessionId.value = sessionId
+    if (!sessionSelectedDocuments.value.has(sessionId)) {
+      sessionSelectedDocuments.value.set(sessionId, new Set())
+    }
+    console.log(`📂 Initialized RAG session: ${sessionId}`)
+  }
+
+  const clearSession = (sessionId?: string) => {
+    const targetSessionId = sessionId || currentSessionId.value
+    if (targetSessionId) {
+      sessionSelectedDocuments.value.delete(targetSessionId)
+      if (currentSessionId.value === targetSessionId) {
+        currentSessionId.value = null
+      }
+      console.log(`🗑️ Cleared RAG session: ${targetSessionId}`)
+    }
+  }
+
+  const getActiveSelection = (): Set<string> => {
+    if (currentSessionId.value && sessionSelectedDocuments.value.has(currentSessionId.value)) {
+      return sessionSelectedDocuments.value.get(currentSessionId.value) || new Set()
+    }
+    return selectedDocumentIds.value // Fallback to global selection
+  }
+
+  const setActiveSelection = (selection: Set<string>) => {
+    if (currentSessionId.value) {
+      sessionSelectedDocuments.value.set(currentSessionId.value, new Set(selection))
+    } else {
+      selectedDocumentIds.value = new Set(selection)
+      saveSelectedDocuments()
+    }
+  }
+
   // Computed
   const selectedDocuments = computed(() => {
-    return documents.value.filter(doc => selectedDocumentIds.value.has(doc.id))
+    const activeSelection = getActiveSelection()
+    return documents.value.filter(doc => activeSelection.has(doc.id))
   })
 
   const cachedDocuments = computed(() => {
@@ -74,7 +114,7 @@ export function useRagDocuments() {
         : await ragService.getAllDocuments() as EnhancedDocument[]
       documents.value = docs
       
-      // Restore selected documents from localStorage
+      // Restore selected documents from localStorage (global fallback)
       const savedSelection = localStorage.getItem('rag_selected_documents')
       if (savedSelection) {
         const savedIds = JSON.parse(savedSelection) as string[]
@@ -82,6 +122,9 @@ export function useRagDocuments() {
           documents.value.some(doc => doc.id === id)
         ))
       }
+      
+      // Load embedding status for all documents
+      await updateEmbeddingStatus()
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load documents'
       console.error('Failed to load documents:', err)
@@ -280,24 +323,31 @@ export function useRagDocuments() {
   
   // Toggle document selection with context awareness
   const toggleDocumentSelection = (documentId: string, context: 'chat' | 'settings' = 'settings') => {
-    if (selectedDocumentIds.value.has(documentId)) {
-      selectedDocumentIds.value.delete(documentId)
+    const activeSelection = getActiveSelection()
+    const newSelection = new Set(activeSelection)
+    
+    if (newSelection.has(documentId)) {
+      newSelection.delete(documentId)
     } else {
       // Check limit based on context
       if (context === 'chat') {
         // Enforce chat document limit
-        if (selectedDocumentIds.value.size >= CHAT_DOCUMENT_LIMIT) {
+        if (newSelection.size >= CHAT_DOCUMENT_LIMIT) {
           error.value = `Maximum ${CHAT_DOCUMENT_LIMIT} documents can be selected in chat`
           return
         }
-      } else if (settings.value && selectedDocumentIds.value.size >= settings.value.max_cached_documents) {
+      } else if (settings.value && newSelection.size >= settings.value.max_cached_documents) {
         // Settings context: Check cache limit
-        const oldestId = Array.from(selectedDocumentIds.value)[0]
-        selectedDocumentIds.value.delete(oldestId)
+        const oldestId = Array.from(newSelection)[0]
+        newSelection.delete(oldestId)
       }
-      selectedDocumentIds.value.add(documentId)
+      newSelection.add(documentId)
+      
+      // Trigger priority embedding for newly selected document
+      ensureDocumentEmbeddings([documentId])
     }
-    saveSelectedDocuments()
+    
+    setActiveSelection(newSelection)
   }
 
   // Select all documents
@@ -322,13 +372,76 @@ export function useRagDocuments() {
     localStorage.setItem('rag_selected_documents', JSON.stringify(selectedIds))
   }
 
-  // Search documents
+  // Enhanced embedding status management
+  const updateEmbeddingStatus = async () => {
+    if (!useEnhanced.value) return
+    
+    try {
+      const docIds = documents.value.map(doc => doc.id)
+      if (docIds.length === 0) return
+      
+      const statusMap = await enhancedRagService.getDocumentEmbeddingStatus(docIds)
+      embeddingStatus.value = new Map(Object.entries(statusMap))
+    } catch (err) {
+      console.error('Failed to update embedding status:', err)
+    }
+  }
+
+  const ensureDocumentEmbeddings = async (documentIds: string[]) => {
+    if (!useEnhanced.value || documentIds.length === 0) return
+    
+    try {
+      await enhancedRagService.generateEmbeddingsForSelection(documentIds)
+      console.log(`🔄 Triggered priority embedding generation for ${documentIds.length} documents`)
+      
+      // Update status after triggering embeddings
+      setTimeout(updateEmbeddingStatus, 1000)
+    } catch (err) {
+      console.error('Failed to ensure document embeddings:', err)
+    }
+  }
+
+  const ensureSelectionReady = async () => {
+    const activeSelection = getActiveSelection()
+    const selectedIds = Array.from(activeSelection)
+    
+    if (selectedIds.length === 0) return { ready: [], pending: [] }
+    
+    try {
+      const readinessMap = await enhancedRagService.ensureDocumentsReadyForSearch(selectedIds)
+      
+      const ready = selectedIds.filter(id => readinessMap[id] === 'ready')
+      const pending = selectedIds.filter(id => 
+        ['embedding_queued', 'embedding_processing', 'embedding_retry_queued'].includes(readinessMap[id])
+      )
+      
+      return { ready, pending, status: readinessMap }
+    } catch (err) {
+      console.error('Failed to ensure selection readiness:', err)
+      return { ready: [], pending: selectedIds }
+    }
+  }
+
+  // Search documents with enhanced readiness checking
   const searchDocuments = async (query: string, useSelectedOnly = true) => {
     try {
       isSearching.value = true
       error.value = null
       
-      const contextIds = useSelectedOnly ? Array.from(selectedDocumentIds.value) : []
+      const activeSelection = getActiveSelection()
+      const contextIds = useSelectedOnly ? Array.from(activeSelection) : []
+      
+      // Ensure selected documents are ready for search
+      if (contextIds.length > 0 && useEnhanced.value) {
+        const readiness = await ensureSelectionReady()
+        console.log(`📊 Document readiness: ${readiness.ready.length} ready, ${readiness.pending.length} pending`)
+        
+        if (readiness.ready.length === 0 && readiness.pending.length > 0) {
+          error.value = `Documents are still processing embeddings. Please wait a moment and try again.`
+          return []
+        }
+      }
+      
       searchResults.value = useEnhanced.value 
         ? await enhancedRagService.searchDocuments(query, contextIds)
         : await ragService.searchDocuments(query, contextIds) as EnhancedDocumentChunk[]
@@ -500,6 +613,8 @@ export function useRagDocuments() {
     totalStorageSize,
     totalStorageSizeMB,
     useEnhanced,
+    embeddingStatus,
+    currentSessionId,
     
     // Methods
     initialize,
@@ -524,6 +639,15 @@ export function useRagDocuments() {
     // Enhanced methods
     getEmbeddingStatus,
     validateFile,
+    updateEmbeddingStatus,
+    ensureDocumentEmbeddings,
+    ensureSelectionReady,
+    
+    // Session management
+    initializeSession,
+    clearSession,
+    getActiveSelection,
+    setActiveSelection,
     
     // Constants
     CHAT_DOCUMENT_LIMIT,

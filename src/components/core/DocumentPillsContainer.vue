@@ -7,6 +7,7 @@ import type { EnhancedDocument } from '@/services/enhancedRagService'
 interface Props {
   documents: EnhancedDocument[]
   selectedDocumentIds: Set<string>
+  embeddingStatus?: Map<string, string>
   maxVisible?: number
   limitInfo?: { current: number; max: number; isAtLimit: boolean }
 }
@@ -14,6 +15,7 @@ interface Props {
 interface Emits {
   (e: 'deselect', documentId: string): void
   (e: 'showAll'): void
+  (e: 'ensureEmbeddings', documentIds: string[]): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -71,6 +73,57 @@ const handleDeselect = (documentId: string) => {
   emit('deselect', documentId)
 }
 
+// Get embedding status for a document
+const getEmbeddingStatus = (documentId: string): string => {
+  return props.embeddingStatus?.get(documentId) || 'pending'
+}
+
+// Get embedding status icon
+const getEmbeddingStatusIcon = (status: string): string => {
+  switch (status) {
+    case 'completed': return '✅'
+    case 'processing': return '⚡'
+    case 'failed': return '❌'
+    case 'pending': 
+    default: return '⏳'
+  }
+}
+
+// Get embedding status color
+const getEmbeddingStatusColor = (status: string): string => {
+  switch (status) {
+    case 'completed': return 'text-green-400'
+    case 'processing': return 'text-yellow-400 animate-pulse'
+    case 'failed': return 'text-red-400'
+    case 'pending': 
+    default: return 'text-gray-400'
+  }
+}
+
+// Handle embedding retry
+const handleEmbeddingRetry = (event: Event, documentId: string) => {
+  event.stopPropagation()
+  emit('ensureEmbeddings', [documentId])
+}
+
+// Get pending documents that need embeddings
+const pendingDocuments = computed(() => {
+  return selectedDocuments.value.filter(doc => {
+    const status = getEmbeddingStatus(doc.id)
+    return status === 'pending' || status === 'failed'
+  })
+})
+
+// Auto-trigger embeddings for newly selected documents
+watch(pendingDocuments, (newPending) => {
+  if (newPending.length > 0) {
+    const pendingIds = newPending.map(doc => doc.id)
+    setTimeout(() => {
+      emit('ensureEmbeddings', pendingIds)
+    }, 500) // Small delay to avoid rapid firing
+  }
+})
+
 // Watch for changes to update scroll indicators
 watch(selectedDocuments, () => {
   setTimeout(handleScroll, 100)
@@ -101,10 +154,26 @@ watch(selectedDocuments, () => {
           v-for="doc in visibleDocuments"
           :key="doc.id"
           class="document-pill"
-          :title="`${doc.file_name} (${doc.file_size} bytes)`"
+          :class="{ 
+            'embedding-ready': getEmbeddingStatus(doc.id) === 'completed',
+            'embedding-processing': getEmbeddingStatus(doc.id) === 'processing',
+            'embedding-failed': getEmbeddingStatus(doc.id) === 'failed'
+          }"
+          :title="`${doc.file_name} (${doc.file_size} bytes) - Embedding: ${getEmbeddingStatus(doc.id)}`"
         >
           <DocumentTextIcon class="pill-icon" />
           <span class="pill-text">{{ truncateText(doc.file_name, 20) }}</span>
+          
+          <!-- Embedding Status Indicator -->
+          <div 
+            class="embedding-status"
+            :class="getEmbeddingStatusColor(getEmbeddingStatus(doc.id))"
+            :title="`Embedding status: ${getEmbeddingStatus(doc.id)}`"
+            @click.stop="getEmbeddingStatus(doc.id) === 'failed' ? handleEmbeddingRetry($event, doc.id) : null"
+          >
+            {{ getEmbeddingStatusIcon(getEmbeddingStatus(doc.id)) }}
+          </div>
+          
           <button 
             class="pill-close" 
             @click.stop="handleDeselect(doc.id)"
@@ -204,6 +273,22 @@ watch(selectedDocuments, () => {
   border-color: rgba(59, 130, 246, 0.5);
 }
 
+.document-pill.embedding-ready {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.document-pill.embedding-processing {
+  border-color: rgba(251, 191, 36, 0.4);
+  background: rgba(251, 191, 36, 0.1);
+  animation: pulse 2s infinite;
+}
+
+.document-pill.embedding-failed {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.1);
+}
+
 .pill-icon {
   width: 0.875rem;
   height: 0.875rem;
@@ -235,6 +320,26 @@ watch(selectedDocuments, () => {
   color: rgba(255, 255, 255, 0.9);
   background: rgba(239, 68, 68, 0.2);
   border-radius: 50%;
+}
+
+.embedding-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  font-size: 0.625rem;
+  cursor: default;
+  transition: all 0.2s;
+}
+
+.embedding-status.text-red-400 {
+  cursor: pointer;
+}
+
+.embedding-status.text-red-400:hover {
+  transform: scale(1.2);
+  filter: brightness(1.2);
 }
 
 .more-pill {

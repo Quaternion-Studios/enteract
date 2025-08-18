@@ -379,13 +379,27 @@ export class AgentService {
       if (selectedDocumentIds.length > 0) {
         try {
           console.log(`🔍 Performing RAG search with ${selectedDocumentIds.length} selected documents`)
-          const ragResults = await enhancedRagService.searchDocuments(userMessage, selectedDocumentIds)
           
-          if (ragResults.length > 0) {
-            ragContext = enhancedRagService.formatContextForAI(ragResults)
-            console.log(`📚 RAG context retrieved: ${ragResults.length} chunks, ${ragContext.length} characters`)
+          // Ensure documents are ready for search before proceeding
+          const readinessMap = await enhancedRagService.ensureDocumentsReadyForSearch(selectedDocumentIds)
+          const readyDocs = selectedDocumentIds.filter(id => readinessMap[id] === 'ready')
+          const pendingDocs = selectedDocumentIds.filter(id => 
+            ['embedding_queued', 'embedding_processing', 'embedding_retry_queued'].includes(readinessMap[id])
+          )
+          
+          console.log(`📊 Document readiness: ${readyDocs.length} ready, ${pendingDocs.length} pending`)
+          
+          if (readyDocs.length === 0 && pendingDocs.length > 0) {
+            console.log('⏳ All selected documents are still processing embeddings, proceeding without RAG context')
           } else {
-            console.log('📚 No relevant content found in selected documents')
+            const ragResults = await enhancedRagService.searchDocuments(userMessage, selectedDocumentIds)
+            
+            if (ragResults.length > 0) {
+              ragContext = enhancedRagService.formatContextForAI(ragResults)
+              console.log(`📚 RAG context retrieved: ${ragResults.length} chunks, ${ragContext.length} characters`)
+            } else {
+              console.log('📚 No relevant content found in selected documents')
+            }
           }
         } catch (error) {
           console.error('❌ RAG search failed:', error)

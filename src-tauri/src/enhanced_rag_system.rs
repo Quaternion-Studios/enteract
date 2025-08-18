@@ -89,6 +89,14 @@ pub struct EnhancedRagSystem {
     chunking_service: Arc<Mutex<ChunkingService>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct DocumentValidationResult {
+    pub ready_documents: Vec<String>,
+    pub pending_documents: Vec<String>,
+    pub processing_documents: Vec<String>,
+    pub failed_documents: Vec<String>,
+}
+
 impl EnhancedRagSystem {
     pub async fn new(app_handle: &tauri::AppHandle) -> Result<Self> {
         let app_dir = app_handle.path().app_data_dir()?;
@@ -465,6 +473,30 @@ impl EnhancedRagSystem {
         Ok(())
     }
     
+    async fn queue_priority_embedding_generation(&self, document_id: &str) -> Result<()> {
+        // Add to processing queue with priority
+        let queue_id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        
+        let conn = Connection::open(&self.db_path)?;
+        conn.execute(
+            "INSERT INTO processing_queue (id, document_id, task_type, status, created_at)
+             VALUES (?1, ?2, 'priority_embedding_generation', 'pending', ?3)",
+            params![queue_id, document_id, now],
+        )?;
+        
+        // Process immediately in background
+        let system_clone = self.clone();
+        let document_id_clone = document_id.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = system_clone.process_embeddings(&document_id_clone).await {
+                eprintln!("Failed to process priority embeddings for document {}: {}", document_id_clone, e);
+            }
+        });
+        
+        Ok(())
+    }
+    
     async fn process_embeddings(&self, document_id: &str) -> Result<()> {
         // Wait for embedding service to be ready
         while !self.embedding_service.is_initialized() {
@@ -743,8 +775,20 @@ impl EnhancedRagSystem {
             return Err(anyhow!("Embedding service not initialized"));
         }
         
-        self.queue_embedding_generation(document_id).await?;
-        Ok(format!("Embeddings queued for generation for document {}", document_id))
+        self.queue_priority_embedding_generation(document_id).await?;
+        Ok(format!("Embeddings queued for priority generation for document {}", document_id))
+    }
+    
+    pub async fn generate_embeddings_for_selection(&self, document_ids: &[String]) -> Result<String> {
+        if !self.embedding_service.is_initialized() {
+            return Err(anyhow!("Embedding service not initialized"));
+        }
+        
+        for doc_id in document_ids {
+            self.queue_priority_embedding_generation(doc_id).await?;
+        }
+        
+        Ok(format!("Embeddings queued for priority generation for {} documents", document_ids.len()))
     }
     
     pub async fn clear_embedding_cache(&self) -> Result<String> {
@@ -831,5 +875,153 @@ impl EnhancedRagSystem {
         stats.insert("reranking_enabled".to_string(), serde_json::json!(settings.reranking_enabled));
         
         Ok(stats)
+    }
+    
+    // New methods for enhanced RAG functionality
+    
+    async fn validate_documents_for_search(&self, document_ids: &[String]) -> Result<DocumentValidationResult> {
+        if document_ids.is_empty() {
+            return Ok(DocumentValidationResult {
+                ready_documents: Vec::new(),
+                pending_documents: Vec::new(),
+                processing_documents: Vec::new(),
+                failed_documents: Vec::new(),
+            });
+        }
+        
+        let conn = Connection::open(&self.db_path)?;
+        let mut ready_documents = Vec::new();
+        let mut pending_documents = Vec::new();
+        let mut processing_documents = Vec::new();
+        let mut failed_documents = Vec::new();
+        
+        for doc_id in document_ids {
+            let status: Result<String, _> = conn.query_row(
+                "SELECT embedding_status FROM enhanced_documents WHERE id = ?1",
+                params![doc_id],
+                |row| row.get(0)
+            );
+            
+            match status {
+                Ok(embedding_status) => {
+                    match embedding_status.as_str() {
+                        "completed" => ready_documents.push(doc_id.clone()),
+                        "pending" => {
+                            pending_documents.push(doc_id.clone());
+                            // Trigger priority embedding for pending documents
+                            let _ = self.queue_priority_embedding_generation(doc_id).await;
+                        },
+                        "processing" => processing_documents.push(doc_id.clone()),
+                        "failed" => {
+                            failed_documents.push(doc_id.clone());
+                            // Retry failed embeddings
+                            let _ = self.queue_priority_embedding_generation(doc_id).await;
+                        },
+                        _ => pending_documents.push(doc_id.clone()),
+                    }
+                },
+                Err(_) => {
+                    // Document not found, skip
+                    continue;
+                }
+            }
+        }
+        
+        Ok(DocumentValidationResult {
+            ready_documents,
+            pending_documents,
+            processing_documents,
+            failed_documents,
+        })
+    }
+    
+    async fn perform_intelligent_search(
+        &self, 
+        query: &str, 
+        query_embedding: &Option<Vec<f32>>, 
+        ready_document_ids: &[String],
+        pending_document_ids: &[String]
+    ) -> Result<Vec<SearchResult>> {
+        
+        // Primary search on ready documents with embeddings
+        let mut search_results = if let Some(embedding) = query_embedding {
+            if !ready_document_ids.is_empty() {
+                let hybrid_results = self.search_service.hybrid_search(query, embedding, 15)?;
+                hybrid_results.into_iter()
+                    .filter(|result| ready_document_ids.contains(&result.document_id))
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        
+        // Supplementary BM25 search on pending documents (text-only)
+        if !pending_document_ids.is_empty() && search_results.len() < 10 {
+            let bm25_results = self.search_service.search_bm25(query, 10)?;
+            let pending_results: Vec<SearchResult> = bm25_results.into_iter()
+                .filter(|result| pending_document_ids.contains(&result.document_id))
+                .take(5) // Limit pending results
+                .collect();
+            
+            search_results.extend(pending_results);
+        }
+        
+        // Sort by relevance score
+        search_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Limit total results
+        search_results.truncate(20);
+        
+        Ok(search_results)
+    }
+    
+    pub fn get_embedding_status_for_documents(&self, document_ids: &[String]) -> Result<HashMap<String, String>> {
+        let conn = Connection::open(&self.db_path)?;
+        let mut status_map = HashMap::new();
+        
+        for doc_id in document_ids {
+            let status: Result<String, _> = conn.query_row(
+                "SELECT embedding_status FROM enhanced_documents WHERE id = ?1",
+                params![doc_id],
+                |row| row.get(0)
+            );
+            
+            match status {
+                Ok(embedding_status) => {
+                    status_map.insert(doc_id.clone(), embedding_status);
+                },
+                Err(_) => {
+                    status_map.insert(doc_id.clone(), "not_found".to_string());
+                }
+            }
+        }
+        
+        Ok(status_map)
+    }
+    
+    pub async fn ensure_documents_ready_for_search(&self, document_ids: &[String]) -> Result<HashMap<String, String>> {
+        let validation_result = self.validate_documents_for_search(document_ids).await?;
+        
+        let mut status_map = HashMap::new();
+        
+        for doc_id in &validation_result.ready_documents {
+            status_map.insert(doc_id.clone(), "ready".to_string());
+        }
+        
+        for doc_id in &validation_result.pending_documents {
+            status_map.insert(doc_id.clone(), "embedding_queued".to_string());
+        }
+        
+        for doc_id in &validation_result.processing_documents {
+            status_map.insert(doc_id.clone(), "embedding_processing".to_string());
+        }
+        
+        for doc_id in &validation_result.failed_documents {
+            status_map.insert(doc_id.clone(), "embedding_retry_queued".to_string());
+        }
+        
+        Ok(status_map)
     }
 }
