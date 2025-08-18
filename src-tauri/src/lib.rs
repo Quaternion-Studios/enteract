@@ -82,7 +82,7 @@ use enhanced_rag_commands::{
     get_all_enhanced_documents, delete_enhanced_document, search_enhanced_documents,
     generate_enhanced_embeddings, clear_enhanced_embedding_cache, update_enhanced_rag_settings,
     get_enhanced_rag_settings, get_enhanced_storage_stats, get_embedding_status,
-    validate_enhanced_file_upload
+    validate_enhanced_file_upload, check_document_duplicate
 };
 
 // Import MCP commands
@@ -265,6 +265,7 @@ pub fn run() {
             get_enhanced_storage_stats,
             get_embedding_status,
             validate_enhanced_file_upload,
+            check_document_duplicate,
 
             // MCP commands
             start_mcp_session,

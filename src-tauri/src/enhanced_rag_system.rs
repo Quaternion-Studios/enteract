@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -8,6 +8,7 @@ use std::fs;
 use chrono::Utc;
 use uuid::Uuid;
 use tauri::Manager;
+use sha2::{Sha256, Digest};
 
 use crate::simple_embedding_service::{SimpleEmbeddingService as EmbeddingService, EmbeddingConfig};
 use crate::search_service::{SearchService, SearchConfig, SearchResult};
@@ -29,6 +30,7 @@ pub struct EnhancedDocument {
     pub embedding_status: String, // "pending", "processing", "completed", "failed"
     pub chunk_count: i32,
     pub metadata: Option<String>,
+    pub content_hash: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -164,10 +166,17 @@ impl EnhancedRagSystem {
                 is_cached INTEGER DEFAULT 0,
                 embedding_status TEXT DEFAULT 'pending',
                 chunk_count INTEGER DEFAULT 0,
-                metadata TEXT
+                metadata TEXT,
+                content_hash TEXT
             )",
             [],
         )?;
+        
+        // Add content_hash column if it doesn't exist (for existing databases)
+        let _ = conn.execute(
+            "ALTER TABLE enhanced_documents ADD COLUMN content_hash TEXT",
+            [],
+        );
         
         // Create enhanced document_chunks table
         conn.execute(
@@ -232,12 +241,61 @@ impl EnhancedRagSystem {
         Ok(())
     }
     
+    pub fn check_duplicate_public(&self, content_hash: &str) -> Result<Option<EnhancedDocument>> {
+        self.check_duplicate(content_hash)
+    }
+    
+    fn check_duplicate(&self, content_hash: &str) -> Result<Option<EnhancedDocument>> {
+        let conn = Connection::open(&self.db_path)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, file_name, file_path, file_type, file_size, content,
+                    created_at, updated_at, access_count, last_accessed, is_cached,
+                    embedding_status, chunk_count, metadata, content_hash
+             FROM enhanced_documents
+             WHERE content_hash = ?1"
+        )?;
+        
+        let document = stmt.query_row(params![content_hash], |row| {
+            Ok(EnhancedDocument {
+                id: row.get(0)?,
+                file_name: row.get(1)?,
+                file_path: row.get(2)?,
+                file_type: row.get(3)?,
+                file_size: row.get(4)?,
+                content: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                access_count: row.get(8)?,
+                last_accessed: row.get(9)?,
+                is_cached: row.get::<_, i32>(10)? != 0,
+                embedding_status: row.get(11)?,
+                chunk_count: row.get(12)?,
+                metadata: row.get(13)?,
+                content_hash: row.get(14)?,
+            })
+        }).optional()?;
+        
+        Ok(document)
+    }
+    
     pub async fn upload_document(
         &self,
         file_name: String,
         file_content: Vec<u8>,
         file_type: String,
     ) -> Result<EnhancedDocument> {
+        // Calculate content hash for duplicate detection
+        let mut hasher = Sha256::new();
+        hasher.update(&file_content);
+        hasher.update(file_name.as_bytes());
+        let content_hash = format!("{:x}", hasher.finalize());
+        
+        // Check for duplicates
+        let existing_doc = self.check_duplicate(&content_hash)?;
+        if let Some(doc) = existing_doc {
+            return Ok(doc);
+        }
+        
         // Validate file size
         let (max_size_mb, auto_embedding) = {
             let settings = self.settings.lock().unwrap();
@@ -284,6 +342,7 @@ impl EnhancedRagSystem {
             embedding_status: "pending".to_string(),
             chunk_count: chunks.len() as i32,
             metadata: None,
+            content_hash: Some(content_hash),
         };
         
         // Save to database
@@ -333,8 +392,8 @@ impl EnhancedRagSystem {
             "INSERT INTO enhanced_documents (
                 id, file_name, file_path, file_type, file_size, content,
                 created_at, updated_at, access_count, last_accessed, is_cached,
-                embedding_status, chunk_count, metadata
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                embedding_status, chunk_count, metadata, content_hash
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 document.id,
                 document.file_name,
@@ -350,6 +409,7 @@ impl EnhancedRagSystem {
                 document.embedding_status,
                 document.chunk_count,
                 document.metadata,
+                document.content_hash,
             ],
         )?;
         Ok(())
@@ -632,7 +692,7 @@ impl EnhancedRagSystem {
         let mut stmt = conn.prepare(
             "SELECT id, file_name, file_path, file_type, file_size, content,
                     created_at, updated_at, access_count, last_accessed, is_cached,
-                    embedding_status, chunk_count, metadata
+                    embedding_status, chunk_count, metadata, content_hash
              FROM enhanced_documents
              ORDER BY created_at DESC"
         )?;
@@ -653,6 +713,7 @@ impl EnhancedRagSystem {
                 embedding_status: row.get(11)?,
                 chunk_count: row.get(12)?,
                 metadata: row.get(13)?,
+                content_hash: row.get(14)?,
             })
         })?;
         

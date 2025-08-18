@@ -2,6 +2,12 @@ import { ref, computed } from 'vue'
 import { ragService, type Document, type DocumentChunk, type RagSettings } from '../services/ragService'
 import { enhancedRagService, type EnhancedDocument, type EnhancedDocumentChunk, type EnhancedRagSettings } from '../services/enhancedRagService'
 
+export interface UploadContext {
+  source: 'chat' | 'settings'
+  autoSelect?: boolean
+  maxSelection?: number
+}
+
 export function useRagDocuments() {
   // State - Using enhanced types but keeping backward compatibility
   const documents = ref<EnhancedDocument[]>([])
@@ -13,6 +19,9 @@ export function useRagDocuments() {
   const searchResults = ref<EnhancedDocumentChunk[]>([])
   const isSearching = ref(false)
   const useEnhanced = ref(true) // Flag to enable enhanced RAG system
+  
+  // Chat-specific document limit
+  const CHAT_DOCUMENT_LIMIT = 5
 
   // Computed
   const selectedDocuments = computed(() => {
@@ -92,8 +101,8 @@ export function useRagDocuments() {
     }
   }
 
-  // Upload document with progress tracking
-  const uploadDocument = async (file: File): Promise<EnhancedDocument | null> => {
+  // Upload document with progress tracking and context
+  const uploadDocument = async (file: File, context?: UploadContext): Promise<EnhancedDocument | null> => {
     try {
       error.value = null
       
@@ -103,6 +112,43 @@ export function useRagDocuments() {
         if (!validation.valid) {
           error.value = validation.error || 'File validation failed'
           return null
+        }
+        
+        // Check for duplicates in enhanced system
+        const duplicateCheck = await enhancedRagService.checkDocumentDuplicate(file)
+        if (duplicateCheck.isDuplicate && duplicateCheck.existingDocument) {
+          console.info(`Document "${file.name}" already exists, using existing version`)
+          
+          // Add existing document to the list if not already there
+          const existingInList = documents.value.find(d => d.id === duplicateCheck.existingDocument!.id)
+          if (!existingInList) {
+            documents.value.unshift(duplicateCheck.existingDocument)
+          }
+          
+          // Handle context-specific behavior for existing document
+          const uploadContext = context || { source: 'settings', autoSelect: false }
+          if (uploadContext.source === 'chat') {
+            // Auto-select the existing document in chat context
+            const maxDocs = uploadContext.maxSelection || CHAT_DOCUMENT_LIMIT
+            if (selectedDocumentIds.value.size >= maxDocs) {
+              const sortedSelected = Array.from(selectedDocumentIds.value)
+                .map(id => documents.value.find(d => d.id === id))
+                .filter(Boolean)
+                .sort((a, b) => {
+                  const aTime = new Date(a!.created_at).getTime()
+                  const bTime = new Date(b!.created_at).getTime()
+                  return aTime - bTime
+                })
+              
+              if (sortedSelected.length > 0) {
+                selectedDocumentIds.value.delete(sortedSelected[0]!.id)
+              }
+            }
+            selectedDocumentIds.value.add(duplicateCheck.existingDocument.id)
+            saveSelectedDocuments()
+          }
+          
+          return duplicateCheck.existingDocument
         }
       } else if (settings.value) {
         const validation = ragService.validateFile(file, settings.value as RagSettings)
@@ -136,8 +182,35 @@ export function useRagDocuments() {
       // Add to documents list
       documents.value.unshift(document)
       
-      // Auto-select newly uploaded document
-      selectedDocumentIds.value.add(document.id)
+      // Handle context-specific behavior
+      const uploadContext = context || { source: 'settings', autoSelect: false }
+      
+      if (uploadContext.source === 'chat') {
+        // Chat context: Always auto-select but enforce limit
+        const maxDocs = uploadContext.maxSelection || CHAT_DOCUMENT_LIMIT
+        
+        // If we're at the limit, deselect the oldest document
+        if (selectedDocumentIds.value.size >= maxDocs) {
+          const sortedSelected = Array.from(selectedDocumentIds.value)
+            .map(id => documents.value.find(d => d.id === id))
+            .filter(Boolean)
+            .sort((a, b) => {
+              const aTime = new Date(a!.created_at).getTime()
+              const bTime = new Date(b!.created_at).getTime()
+              return aTime - bTime
+            })
+          
+          if (sortedSelected.length > 0) {
+            selectedDocumentIds.value.delete(sortedSelected[0]!.id)
+          }
+        }
+        
+        selectedDocumentIds.value.add(document.id)
+      } else if (uploadContext.autoSelect !== false && uploadContext.source === 'settings') {
+        // Settings context: Only auto-select if explicitly requested
+        // By default, don't auto-select in settings
+      }
+      
       saveSelectedDocuments()
       
       // Clear progress after delay
@@ -153,12 +226,12 @@ export function useRagDocuments() {
     }
   }
 
-  // Upload multiple documents
-  const uploadDocuments = async (files: FileList | File[]): Promise<EnhancedDocument[]> => {
+  // Upload multiple documents with context
+  const uploadDocuments = async (files: FileList | File[], context?: UploadContext): Promise<EnhancedDocument[]> => {
     const uploaded: EnhancedDocument[] = []
     
     for (const file of files) {
-      const doc = await uploadDocument(file)
+      const doc = await uploadDocument(file, context)
       if (doc) {
         uploaded.push(doc)
       }
@@ -190,14 +263,35 @@ export function useRagDocuments() {
     }
   }
 
-  // Toggle document selection
-  const toggleDocumentSelection = (documentId: string) => {
+  // Check if selection limit is reached for chat context
+  const isSelectionLimitReached = (context: 'chat' | 'settings' = 'settings'): boolean => {
+    if (context === 'chat') {
+      return selectedDocumentIds.value.size >= CHAT_DOCUMENT_LIMIT
+    }
+    return false
+  }
+  
+  // Get selection limit info
+  const getSelectionLimitInfo = () => ({
+    current: selectedDocumentIds.value.size,
+    max: CHAT_DOCUMENT_LIMIT,
+    isAtLimit: selectedDocumentIds.value.size >= CHAT_DOCUMENT_LIMIT
+  })
+  
+  // Toggle document selection with context awareness
+  const toggleDocumentSelection = (documentId: string, context: 'chat' | 'settings' = 'settings') => {
     if (selectedDocumentIds.value.has(documentId)) {
       selectedDocumentIds.value.delete(documentId)
     } else {
-      // Check if we're at the cache limit
-      if (settings.value && selectedDocumentIds.value.size >= settings.value.max_cached_documents) {
-        // Remove the oldest selected document
+      // Check limit based on context
+      if (context === 'chat') {
+        // Enforce chat document limit
+        if (selectedDocumentIds.value.size >= CHAT_DOCUMENT_LIMIT) {
+          error.value = `Maximum ${CHAT_DOCUMENT_LIMIT} documents can be selected in chat`
+          return
+        }
+      } else if (settings.value && selectedDocumentIds.value.size >= settings.value.max_cached_documents) {
+        // Settings context: Check cache limit
         const oldestId = Array.from(selectedDocumentIds.value)[0]
         selectedDocumentIds.value.delete(oldestId)
       }
@@ -424,10 +518,15 @@ export function useRagDocuments() {
     updateSettings,
     getStorageStats,
     formatContextForAI,
+    isSelectionLimitReached,
+    getSelectionLimitInfo,
     
     // Enhanced methods
     getEmbeddingStatus,
     validateFile,
+    
+    // Constants
+    CHAT_DOCUMENT_LIMIT,
     
     // Service references for advanced usage
     ragService,

@@ -7,9 +7,7 @@ import {
   ExclamationTriangleIcon,
   MicrophoneIcon,
   StopIcon,
-  QueueListIcon,
-  DocumentTextIcon,
-  CloudArrowUpIcon
+  QueueListIcon
 } from '@heroicons/vue/24/outline'
 import { useChatManagement } from '../../composables/useChatManagement'
 import { useSpeechEvents } from '../../composables/useSpeechEvents'
@@ -20,6 +18,7 @@ import AgentActionButtons from './AgentActionButtons.vue'
 import ModelSelector from './ModelSelector.vue'
 import ChatWindowSidebarAdapter from './ChatWindowSidebarAdapter.vue'
 import DocumentContextDropdown from '../rag/DocumentContextDropdown.vue'
+import DocumentPillsContainer from './DocumentPillsContainer.vue'
 import { FileService } from '../../composables/fileService'
 
 interface Props {
@@ -183,7 +182,7 @@ const handleEnhancedKeydown = (event: KeyboardEvent) => {
   }
 }
 
-// File upload handlers (using the same logic as SettingsPanel)
+// File upload handlers for chat context
 const handleFileUploadInput = async (event: Event) => {
   const input = event.target as HTMLInputElement
   const files = input.files
@@ -191,13 +190,19 @@ const handleFileUploadInput = async (event: Event) => {
   
   isUploading.value = true
   try {
-    const uploadedDocs = await ragDocuments.uploadDocuments(files)
+    // Upload with chat context - auto-selects and enforces limit
+    const uploadedDocs = await ragDocuments.uploadDocuments(files, { 
+      source: 'chat',
+      autoSelect: true,
+      maxSelection: ragDocuments.CHAT_DOCUMENT_LIMIT 
+    })
     console.log(`📚 Uploaded ${uploadedDocs.length} documents via ChatWindow`)
     
-    // Auto-select uploaded documents (same as settings implementation)
-    uploadedDocs.forEach(doc => {
-      ragDocuments.selectedDocumentIds.value.add(doc.id)
-    })
+    // Check if we're at the limit
+    const limitInfo = ragDocuments.getSelectionLimitInfo()
+    if (limitInfo.isAtLimit) {
+      console.info(`📑 Document limit reached: ${limitInfo.current}/${limitInfo.max} documents selected`)
+    }
   } catch (error) {
     console.error('Failed to upload documents:', error)
   } finally {
@@ -224,13 +229,19 @@ const handleDrop = async (event: DragEvent) => {
   
   isUploading.value = true
   try {
-    const uploadedDocs = await ragDocuments.uploadDocuments(files)
+    // Upload with chat context - auto-selects and enforces limit
+    const uploadedDocs = await ragDocuments.uploadDocuments(files, { 
+      source: 'chat',
+      autoSelect: true,
+      maxSelection: ragDocuments.CHAT_DOCUMENT_LIMIT 
+    })
     console.log(`📚 Uploaded ${uploadedDocs.length} documents via ChatWindow drag & drop`)
     
-    // Auto-select uploaded documents (same as settings implementation)
-    uploadedDocs.forEach(doc => {
-      ragDocuments.selectedDocumentIds.value.add(doc.id)
-    })
+    // Check if we're at the limit
+    const limitInfo = ragDocuments.getSelectionLimitInfo()
+    if (limitInfo.isAtLimit) {
+      console.info(`📑 Document limit reached: ${limitInfo.current}/${limitInfo.max} documents selected`)
+    }
   } catch (error) {
     console.error('Failed to upload documents:', error)
   } finally {
@@ -463,22 +474,28 @@ const handleClearChat = () => {
 
 // Document handling functions
 const handleDocumentSelect = (documentId: string) => {
-  ragDocuments.toggleDocumentSelection(documentId)
+  ragDocuments.toggleDocumentSelection(documentId, 'chat')
 }
 
 const handleDocumentDeselect = (documentId: string) => {
-  ragDocuments.selectedDocumentIds.value.delete(documentId)
+  ragDocuments.toggleDocumentSelection(documentId, 'chat')
 }
 
 const handleDocumentUpload = async (files: FileList) => {
   try {
-    const uploadedDocs = await ragDocuments.uploadDocuments(files)
+    // Upload with chat context - auto-selects and enforces limit
+    const uploadedDocs = await ragDocuments.uploadDocuments(files, { 
+      source: 'chat',
+      autoSelect: true,
+      maxSelection: ragDocuments.CHAT_DOCUMENT_LIMIT 
+    })
     console.log(`📚 Uploaded ${uploadedDocs.length} documents via dropdown`)
     
-    // Auto-select uploaded documents
-    uploadedDocs.forEach(doc => {
-      ragDocuments.selectedDocumentIds.value.add(doc.id)
-    })
+    // Check if we're at the limit
+    const limitInfo = ragDocuments.getSelectionLimitInfo()
+    if (limitInfo.isAtLimit) {
+      console.info(`📑 Document limit reached: ${limitInfo.current}/${limitInfo.max} documents selected`)
+    }
     
     // Close dropdown after successful upload
     showDocumentDropdown.value = false
@@ -754,19 +771,15 @@ onUnmounted(() => {
           <!-- Chat Input -->
           <div class="chat-input-container">
             <div class="input-wrapper">
-              <!-- Referenced Documents Pills -->
-              <div v-if="ragDocuments.selectedDocumentIds.value.size > 0" class="doc-pills">
-                <div
-                  v-for="doc in ragDocuments.documents.value.filter(d => ragDocuments.selectedDocumentIds.value.has(d.id))"
-                  :key="doc.id"
-                  class="doc-pill"
-                  title="Included in context"
-                >
-                  <DocumentTextIcon class="w-3 h-3" />
-                  <span class="pill-text">{{ doc.file_name }}</span>
-                  <button class="pill-close" @click.stop="handleDocumentDeselect(doc.id)">×</button>
-                </div>
-              </div>
+              <!-- Document Pills Container -->
+              <DocumentPillsContainer
+                v-if="ragDocuments.selectedDocumentIds.value.size > 0"
+                :documents="ragDocuments.documents.value"
+                :selected-document-ids="ragDocuments.selectedDocumentIds.value"
+                :limit-info="ragDocuments.getSelectionLimitInfo()"
+                :max-visible="3"
+                @deselect="handleDocumentDeselect"
+              />
               <input 
                 ref="chatInputRef"
                 v-model="chatMessage"

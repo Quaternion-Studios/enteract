@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { type PropType, ref } from 'vue'
+import { type PropType, ref, computed } from 'vue'
 import { CloudArrowUpIcon, FolderIcon, ArrowsPointingOutIcon, TrashIcon, DocumentTextIcon, ChartBarIcon } from '@heroicons/vue/24/outline'
+import { formatFileSize as formatBytes } from '@/utils/formatters'
 
 interface RagDoc {
   id: string
@@ -38,6 +39,11 @@ const props = defineProps({
 
 const emit = defineEmits<{ (e: 'clearCache'): void }>()
 const fileInputRef = ref<HTMLInputElement>()
+
+const formattedStorageSize = computed(() => {
+  const totalBytes = props.totalStorageSizeMB * 1024 * 1024
+  return formatBytes(totalBytes)
+})
 </script>
 
 <template>
@@ -123,7 +129,7 @@ const fileInputRef = ref<HTMLInputElement>()
           <div class="stat-label">Cached</div>
         </div>
         <div class="stat-item">
-          <div class="stat-value">{{ (totalStorageSizeMB).toFixed(1) }}MB</div>
+          <div class="stat-value" :title="`${totalStorageSizeMB.toFixed(2)} MB`">{{ formattedStorageSize }}</div>
           <div class="stat-label">Storage Used</div>
         </div>
       </div>
@@ -270,5 +276,60 @@ const fileInputRef = ref<HTMLInputElement>()
     </div>
   </div>
 </template>
+
+<style scoped>
+.storage-stats {
+  display: flex;
+  gap: 1.5rem;
+  margin-top: 1rem;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.stat-value {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100px;
+  cursor: default;
+}
+
+.stat-value:hover {
+  overflow: visible;
+  position: relative;
+  z-index: 10;
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 0.25rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .storage-stats {
+    gap: 1rem;
+  }
+  
+  .stat-value {
+    font-size: 1rem;
+    max-width: 80px;
+  }
+  
+  .stat-label {
+    font-size: 0.7rem;
+  }
+}
+</style>
 
 

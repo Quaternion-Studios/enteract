@@ -288,6 +288,30 @@ class EnhancedRagService {
     }
   }
 
+  async checkDocumentDuplicate(file: File): Promise<{ isDuplicate: boolean; existingDocument?: EnhancedDocument }> {
+    try {
+      if (!this.initialized) {
+        await this.initialize()
+      }
+      
+      const fileContent = await this.fileToArrayBuffer(file)
+      const uint8Array = new Uint8Array(fileContent)
+      
+      const result = await invoke<Record<string, any>>('check_document_duplicate', {
+        fileName: file.name,
+        fileContent: Array.from(uint8Array)
+      })
+      
+      return {
+        isDuplicate: result.is_duplicate as boolean,
+        existingDocument: result.existing_document as EnhancedDocument | undefined
+      }
+    } catch (error) {
+      console.error('Duplicate check failed:', error)
+      return { isDuplicate: false }
+    }
+  }
+
   // Helper methods
   formatFileSize(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`
