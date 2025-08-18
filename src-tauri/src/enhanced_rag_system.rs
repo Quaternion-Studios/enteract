@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use rusqlite::{Connection, params, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -9,11 +10,72 @@ use uuid::Uuid;
 use tauri::Manager;
 use sha2::{Sha256, Digest};
 
-use super::embeddings::EmbeddingService;
-use super::search::{SearchService, SearchResult, DocumentChunk};
-use super::chunking::{ChunkingService, TextChunk, extract_text_from_pdf, clean_text};
-use super::types::*;
+use crate::simple_embedding_service::{SimpleEmbeddingService as EmbeddingService, EmbeddingConfig};
+use crate::search_service::{SearchService, SearchConfig, SearchResult};
+use crate::chunking_service::{ChunkingService, ChunkingConfig, TextChunk, extract_text_from_pdf, clean_text};
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EnhancedDocument {
+    pub id: String,
+    pub file_name: String,
+    pub file_path: String,
+    pub file_type: String,
+    pub file_size: i64,
+    pub content: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub access_count: i32,
+    pub last_accessed: Option<String>,
+    pub is_cached: bool,
+    pub embedding_status: String, // "pending", "processing", "completed", "failed"
+    pub chunk_count: i32,
+    pub metadata: Option<String>,
+    pub content_hash: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EnhancedDocumentChunk {
+    pub id: String,
+    pub document_id: String,
+    pub chunk_index: i32,
+    pub content: String,
+    pub start_char: i32,
+    pub end_char: i32,
+    pub token_count: i32,
+    pub embedding: Option<Vec<f32>>,
+    pub similarity_score: Option<f32>,
+    pub bm25_score: Option<f32>,
+    pub metadata: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EnhancedRagSettings {
+    pub max_document_size_mb: f64,
+    pub max_collection_size_gb: f64,
+    pub max_cached_documents: usize,
+    pub auto_embedding: bool,
+    pub background_processing: bool,
+    pub reranking_enabled: bool,
+    pub chunking_config: ChunkingConfig,
+    pub embedding_config: EmbeddingConfig,
+    pub search_config: SearchConfig,
+}
+
+impl Default for EnhancedRagSettings {
+    fn default() -> Self {
+        Self {
+            max_document_size_mb: 50.0,
+            max_collection_size_gb: 2.0,
+            max_cached_documents: 10,
+            auto_embedding: true,
+            background_processing: true,
+            reranking_enabled: false, // Disabled by default for performance
+            chunking_config: ChunkingConfig::default(),
+            embedding_config: EmbeddingConfig::default(),
+            search_config: SearchConfig::default(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct EnhancedRagSystem {
@@ -27,6 +89,13 @@ pub struct EnhancedRagSystem {
     chunking_service: Arc<Mutex<ChunkingService>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct DocumentValidationResult {
+    pub ready_documents: Vec<String>,
+    pub pending_documents: Vec<String>,
+    pub processing_documents: Vec<String>,
+    pub failed_documents: Vec<String>,
+}
 
 impl EnhancedRagSystem {
     pub async fn new(app_handle: &tauri::AppHandle) -> Result<Self> {
@@ -45,9 +114,9 @@ impl EnhancedRagSystem {
         
         // Initialize services
         let embedding_service = Arc::new(EmbeddingService::new(
-            settings.lock().unwrap().embedding_config.clone(),
-            cache_path.clone()
-        )?);
+            cache_path.clone(), 
+            Some(settings.lock().unwrap().embedding_config.clone())
+        ));
         
         let search_service = Arc::new(SearchService::new(
             index_path.clone(),
@@ -447,8 +516,7 @@ impl EnhancedRagSystem {
         let chunk_texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
         
         match self.embedding_service.embed_documents(chunk_texts) {
-            Ok(embeddings_vec) => {
-                let embeddings = &embeddings_vec;
+            Ok(embeddings) => {
                 // Save embeddings to database and search index
                 self.save_embeddings_to_db(document_id, &chunks, &embeddings)?;
                 self.index_chunks_for_search(document_id, &chunks, &embeddings).await?;
@@ -515,9 +583,9 @@ impl EnhancedRagSystem {
     }
     
     async fn index_chunks_for_search(&self, document_id: &str, chunks: &[EnhancedDocumentChunk], embeddings: &[Vec<f32>]) -> Result<()> {
-        let search_chunks: Vec<DocumentChunk> = chunks.iter()
+        let search_chunks: Vec<crate::search_service::DocumentChunk> = chunks.iter()
             .zip(embeddings.iter())
-            .map(|(chunk, embedding)| DocumentChunk {
+            .map(|(chunk, embedding)| crate::search_service::DocumentChunk {
                 id: chunk.id.clone(),
                 document_id: chunk.document_id.clone(),
                 content: chunk.content.clone(),
@@ -574,9 +642,9 @@ impl EnhancedRagSystem {
         };
         
         // Perform search
-        let search_results = if let Some(ref embedding_vec) = query_embedding {
+        let search_results = if let Some(embedding) = query_embedding {
             // Use hybrid search (BM25 + vector)
-            self.search_service.hybrid_search(query, &embedding_vec, 20)?
+            self.search_service.hybrid_search(query, &embedding, 20)?
         } else {
             // Fall back to BM25 only
             self.search_service.search_bm25(query, 20)?

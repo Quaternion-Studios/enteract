@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { DocumentTextIcon, ChevronLeftIcon, ChevronRightIcon, XMarkIcon } from '@heroicons/vue/24/outline'
 import { truncateText } from '@/utils/formatters'
-import type { EnhancedDocument } from '@/services/rag/types'
+import type { EnhancedDocument } from '@/services/enhancedRagService'
 
 interface Props {
   documents: EnhancedDocument[]
