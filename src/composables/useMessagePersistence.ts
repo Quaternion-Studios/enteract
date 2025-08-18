@@ -85,7 +85,7 @@ export function useMessagePersistence() {
         sessionId,
         message: {
           id: message.id,
-          type: message.type,
+          message_type: message.type, // Fixed: backend expects message_type
           source: message.source,
           content: message.content,
           timestamp: message.timestamp,
@@ -119,7 +119,7 @@ export function useMessagePersistence() {
         sessionId: batch.sessionId,
         messages: batch.messages.map(msg => ({
           id: msg.id,
-          type: msg.type,
+          message_type: msg.type, // Fixed: backend expects message_type
           source: msg.source,
           content: msg.content,
           timestamp: msg.timestamp,

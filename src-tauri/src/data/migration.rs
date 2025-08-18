@@ -35,13 +35,15 @@ pub fn initialize_database(app_handle: AppHandle) -> Result<String, String> {
     // Configure SQLite for optimal performance
     connection.execute("PRAGMA foreign_keys = ON", params![])
         .map_err(|e| format!("Failed to enable foreign keys: {}", e))?;
-    connection.execute("PRAGMA journal_mode = WAL", params![])
+    
+    // Use query_row for PRAGMA statements that return results
+    let _: String = connection.query_row("PRAGMA journal_mode = WAL", params![], |row| row.get(0))
         .map_err(|e| format!("Failed to set WAL mode: {}", e))?;
-    connection.execute("PRAGMA synchronous = NORMAL", params![])
+    let _: String = connection.query_row("PRAGMA synchronous = NORMAL", params![], |row| row.get(0))
         .map_err(|e| format!("Failed to set synchronous mode: {}", e))?;
-    connection.execute("PRAGMA cache_size = 10000", params![])
+    let _: i64 = connection.query_row("PRAGMA cache_size = 10000", params![], |row| row.get(0))
         .map_err(|e| format!("Failed to set cache size: {}", e))?;
-    connection.execute("PRAGMA temp_store = memory", params![])
+    let _: i64 = connection.query_row("PRAGMA temp_store = memory", params![], |row| row.get(0))
         .map_err(|e| format!("Failed to set temp store: {}", e))?;
     
     // Create all tables

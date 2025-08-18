@@ -32,11 +32,14 @@ impl ChatStorage {
         let connection = Connection::open(&db_path)?;
         
         // Configure SQLite for optimal performance
+        // Use execute for PRAGMA statements that don't return results
         connection.execute("PRAGMA foreign_keys = ON", params![])?;
-        connection.execute("PRAGMA journal_mode = WAL", params![])?;
-        connection.execute("PRAGMA synchronous = NORMAL", params![])?;
-        connection.execute("PRAGMA cache_size = 10000", params![])?;
-        connection.execute("PRAGMA temp_store = memory", params![])?;
+        
+        // Use prepare/query for PRAGMA statements that return results
+        let _: String = connection.query_row("PRAGMA journal_mode = WAL", params![], |row| row.get(0))?;
+        let _: String = connection.query_row("PRAGMA synchronous = NORMAL", params![], |row| row.get(0))?;
+        let _: i64 = connection.query_row("PRAGMA cache_size = 10000", params![], |row| row.get(0))?;
+        let _: i64 = connection.query_row("PRAGMA temp_store = memory", params![], |row| row.get(0))?;
         
         let mut storage = Self { connection };
         storage.initialize_chat_tables()?;

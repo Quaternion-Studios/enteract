@@ -30,13 +30,17 @@ impl ConversationStorage {
         }
 
         let connection = Connection::open(&db_path)?;
+        println!("ℹ️ Opened database connection at: {:?}", db_path);
         
         // Configure SQLite for optimal performance
+        // Use execute for PRAGMA statements that don't return results
         connection.execute("PRAGMA foreign_keys = ON", params![])?;
-        connection.execute("PRAGMA journal_mode = WAL", params![])?;
-        connection.execute("PRAGMA synchronous = NORMAL", params![])?;
-        connection.execute("PRAGMA cache_size = 10000", params![])?;
-        connection.execute("PRAGMA temp_store = memory", params![])?;
+        
+        // Use prepare/query for PRAGMA statements that return results
+        let _: String = connection.query_row("PRAGMA journal_mode = WAL", params![], |row| row.get(0))?;
+        let _: String = connection.query_row("PRAGMA synchronous = NORMAL", params![], |row| row.get(0))?;
+        let _: i64 = connection.query_row("PRAGMA cache_size = 10000", params![], |row| row.get(0))?;
+        let _: i64 = connection.query_row("PRAGMA temp_store = memory", params![], |row| row.get(0))?;
         
         let mut storage = Self { connection };
         storage.initialize_conversation_tables()?;
@@ -88,6 +92,7 @@ impl ConversationStorage {
             CREATE INDEX IF NOT EXISTS idx_conversation_insights_type ON conversation_insights(insight_type);
         "#)?;
 
+        println!("✅ Conversation tables initialized successfully");
         Ok(())
     }
 
@@ -232,17 +237,22 @@ impl ConversationStorage {
     // Individual message operations
     pub fn save_conversation_message(&mut self, session_id: &str, message: ConversationMessage) -> Result<()> {
         // Check if message already exists (deduplication)
-        let exists: bool = self.connection.query_row(
-            "SELECT 1 FROM conversation_messages WHERE id = ?",
+        let exists: bool = match self.connection.query_row(
+            "SELECT 1 FROM conversation_messages WHERE id = ? LIMIT 1",
             params![message.id],
             |_| Ok(true)
-        ).unwrap_or(false);
+        ) {
+            Ok(val) => val,
+            Err(rusqlite::Error::QueryReturnedNoRows) => false,
+            Err(e) => return Err(e),
+        };
 
         if exists {
+            println!("⚠️ Message {} already exists, skipping", message.id);
             return Ok(()); // Message already saved
         }
 
-        self.connection.execute(
+        let affected = self.connection.execute(
             "INSERT INTO conversation_messages (id, session_id, type, source, content, timestamp, confidence) 
              VALUES (?, ?, ?, ?, ?, ?, ?)",
             params![
@@ -251,19 +261,30 @@ impl ConversationStorage {
             ]
         )?;
 
+        println!("✅ Saved conversation message {} to session {} (rows: {})", message.id, session_id, affected);
         Ok(())
     }
 
     pub fn batch_save_conversation_messages(&mut self, session_id: &str, messages: Vec<ConversationMessage>) -> Result<()> {
-        let tx = self.connection.transaction()?;
+        if messages.is_empty() {
+            return Ok(());
+        }
 
-        for message in messages {
+        let tx = self.connection.transaction()?;
+        let mut saved_count = 0;
+        let mut skipped_count = 0;
+
+        for message in &messages {
             // Check if message already exists (deduplication)
-            let exists: bool = tx.query_row(
-                "SELECT 1 FROM conversation_messages WHERE id = ?",
+            let exists: bool = match tx.query_row(
+                "SELECT 1 FROM conversation_messages WHERE id = ? LIMIT 1",
                 params![message.id],
                 |_| Ok(true)
-            ).unwrap_or(false);
+            ) {
+                Ok(val) => val,
+                Err(rusqlite::Error::QueryReturnedNoRows) => false,
+                Err(e) => return Err(e),
+            };
 
             if !exists {
                 tx.execute(
@@ -274,28 +295,32 @@ impl ConversationStorage {
                         message.content, message.timestamp, message.confidence
                     ]
                 )?;
+                saved_count += 1;
+            } else {
+                skipped_count += 1;
             }
         }
 
         tx.commit()?;
+        println!("✅ Batch saved {} messages to session {}, skipped {} duplicates", saved_count, session_id, skipped_count);
         Ok(())
     }
 
     pub fn update_conversation_message(&mut self, session_id: &str, message_id: &str, updates: ConversationMessageUpdate) -> Result<()> {
         let mut set_clauses = Vec::new();
-        let mut params = Vec::new();
+        let mut sql_params = Vec::new();
 
         if let Some(content) = updates.content {
             set_clauses.push("content = ?");
-            params.push(content);
+            sql_params.push(rusqlite::types::Value::Text(content));
         }
         if let Some(confidence) = updates.confidence {
             set_clauses.push("confidence = ?");
-            params.push(confidence.to_string());
+            sql_params.push(rusqlite::types::Value::Real(confidence));
         }
         if let Some(timestamp) = updates.timestamp {
             set_clauses.push("timestamp = ?");
-            params.push(timestamp.to_string());
+            sql_params.push(rusqlite::types::Value::Integer(timestamp));
         }
 
         if set_clauses.is_empty() {
@@ -303,16 +328,22 @@ impl ConversationStorage {
         }
 
         // Add message_id and session_id for WHERE clause
-        params.push(message_id.to_string());
-        params.push(session_id.to_string());
+        sql_params.push(rusqlite::types::Value::Text(message_id.to_string()));
+        sql_params.push(rusqlite::types::Value::Text(session_id.to_string()));
 
         let sql = format!(
             "UPDATE conversation_messages SET {} WHERE id = ? AND session_id = ?",
             set_clauses.join(", ")
         );
 
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
-        self.connection.execute(&sql, param_refs.as_slice())?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> = sql_params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+        let affected = self.connection.execute(&sql, param_refs.as_slice())?;
+        
+        if affected == 0 {
+            println!("⚠️ No message found to update: {} in session {}", message_id, session_id);
+        } else {
+            println!("✅ Updated message {} in session {}", message_id, session_id);
+        }
 
         Ok(())
     }
