@@ -32,18 +32,18 @@ pub fn initialize_database(app_handle: AppHandle) -> Result<String, String> {
     let connection = Connection::open(&db_path)
         .map_err(|e| format!("Failed to open database: {}", e))?;
     
-    // Configure SQLite for optimal performance
+    // Configure SQLite for optimal performance using safer approach
     connection.execute("PRAGMA foreign_keys = ON", params![])
         .map_err(|e| format!("Failed to enable foreign keys: {}", e))?;
     
-    // Use query_row for PRAGMA statements that return results
-    let _: String = connection.query_row("PRAGMA journal_mode = WAL", params![], |row| row.get(0))
+    // Set pragmas with execute - they may or may not return results but execute handles both cases
+    connection.execute("PRAGMA journal_mode = WAL", params![])
         .map_err(|e| format!("Failed to set WAL mode: {}", e))?;
-    let _: String = connection.query_row("PRAGMA synchronous = NORMAL", params![], |row| row.get(0))
+    connection.execute("PRAGMA synchronous = NORMAL", params![])
         .map_err(|e| format!("Failed to set synchronous mode: {}", e))?;
-    let _: i64 = connection.query_row("PRAGMA cache_size = 10000", params![], |row| row.get(0))
+    connection.execute("PRAGMA cache_size = 10000", params![])
         .map_err(|e| format!("Failed to set cache size: {}", e))?;
-    let _: i64 = connection.query_row("PRAGMA temp_store = memory", params![], |row| row.get(0))
+    connection.execute("PRAGMA temp_store = memory", params![])
         .map_err(|e| format!("Failed to set temp store: {}", e))?;
     
     // Create all tables

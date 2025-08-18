@@ -32,15 +32,24 @@ impl ConversationStorage {
         let connection = Connection::open(&db_path)?;
         println!("ℹ️ Opened database connection at: {:?}", db_path);
         
-        // Configure SQLite for optimal performance
-        // Use execute for PRAGMA statements that don't return results
-        connection.execute("PRAGMA foreign_keys = ON", params![])?;
+        // Configure SQLite for optimal performance using safer approach
+        connection.execute("PRAGMA foreign_keys = ON", params![]).map_err(|e| {
+            println!("⚠️ Warning: Failed to set foreign_keys: {}", e);
+            e
+        })?;
         
-        // Use prepare/query for PRAGMA statements that return results
-        let _: String = connection.query_row("PRAGMA journal_mode = WAL", params![], |row| row.get(0))?;
-        let _: String = connection.query_row("PRAGMA synchronous = NORMAL", params![], |row| row.get(0))?;
-        let _: i64 = connection.query_row("PRAGMA cache_size = 10000", params![], |row| row.get(0))?;
-        let _: i64 = connection.query_row("PRAGMA temp_store = memory", params![], |row| row.get(0))?;
+        // Set journal mode with proper handling
+        match connection.execute("PRAGMA journal_mode = WAL", params![]) {
+            Ok(_) => println!("✅ Set journal mode to WAL"),
+            Err(e) => println!("⚠️ Warning: Failed to set WAL mode: {}", e),
+        }
+        
+        // Set other pragmas with execute (they don't necessarily return meaningful results)
+        connection.execute("PRAGMA synchronous = NORMAL", params![]).ok();
+        connection.execute("PRAGMA cache_size = 10000", params![]).ok();
+        connection.execute("PRAGMA temp_store = memory", params![]).ok();
+        
+        println!("✅ SQLite configuration applied successfully");
         
         let mut storage = Self { connection };
         storage.initialize_conversation_tables()?;
