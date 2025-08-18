@@ -68,7 +68,14 @@ windows = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics",
-    "Win32_Graphics_Gdi"
+    "Win32_Graphics_Gdi",
+    # OCR API features
+    "Media_Ocr",
+    "Storage_Streams",
+    "Graphics_Imaging",
+    "Storage",
+    "Foundation",
+    "Foundation_Collections"
 ] }
 winapi = { version = "0.3", features = [
     "winuser",
@@ -81,6 +88,7 @@ winapi = { version = "0.3", features = [
     "handleapi"
 ] }
 
+# Note: image and base64 dependencies already declared above
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

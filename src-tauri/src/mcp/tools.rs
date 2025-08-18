@@ -734,3 +734,466 @@ async fn take_screenshot_full(_format: Option<String>, _quality: Option<u8>) -> 
 async fn take_screenshot_region(_region: ScreenRegion, _format: Option<String>, _quality: Option<u8>) -> Result<ScreenshotResult, String> {
     Err("Screenshot not implemented for this platform".to_string())
 }
+
+// ========== NEW ATOMIC OCR TOOLS ==========
+
+#[derive(Clone)]
+pub struct FindTextTool;
+
+#[async_trait]
+impl ComputerUseTool for FindTextTool {
+    fn name(&self) -> &str { "find_text" }
+    
+    fn description(&self) -> String {
+        "Find text on screen using OCR and return its location and confidence".to_string()
+    }
+    
+    fn danger_level(&self) -> DangerLevel { DangerLevel::Low }
+    
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text to search for on screen"
+                },
+                "confidence_threshold": {
+                    "type": "number",
+                    "default": 0.8,
+                    "description": "Minimum confidence level (0.0-1.0) for text recognition"
+                },
+                "case_sensitive": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether to perform case-sensitive matching"
+                }
+            },
+            "required": ["text"]
+        })
+    }
+    
+    async fn execute(&self, params: serde_json::Value, _session_id: &str) -> Result<ToolExecutionResult, String> {
+        let start_time = Instant::now();
+        
+        let text_to_find = params["text"].as_str()
+            .ok_or("Missing required parameter: text")?;
+        let confidence_threshold = params["confidence_threshold"].as_f64().unwrap_or(0.8);
+        let case_sensitive = params["case_sensitive"].as_bool().unwrap_or(false);
+        
+        // Take screenshot first
+        let screenshot_result = take_screenshot_full(Some("png".to_string()), Some(80)).await?;
+        
+        // Perform OCR on the screenshot
+        let text_locations = find_text_in_image(&screenshot_result.image_base64, text_to_find, confidence_threshold, case_sensitive).await?;
+        
+        let execution_time = start_time.elapsed().as_millis() as u64;
+        
+        Ok(ToolExecutionResult {
+            success: true,
+            result: serde_json::json!({
+                "text_locations": text_locations,
+                "search_text": text_to_find,
+                "confidence_threshold": confidence_threshold,
+                "matches_found": text_locations.len()
+            }),
+            error: None,
+            execution_time_ms: execution_time,
+            tool_name: "find_text".to_string(),
+        })
+    }
+    
+    fn clone_box(&self) -> Box<dyn ComputerUseTool + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+#[derive(Clone)]
+pub struct ClickAtTool;
+
+#[async_trait]
+impl ComputerUseTool for ClickAtTool {
+    fn name(&self) -> &str { "click_at" }
+    
+    fn description(&self) -> String {
+        "Click at specific coordinates on screen".to_string()
+    }
+    
+    fn danger_level(&self) -> DangerLevel { DangerLevel::Medium }
+    
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "x": {
+                    "type": "integer",
+                    "description": "X coordinate to click"
+                },
+                "y": {
+                    "type": "integer",
+                    "description": "Y coordinate to click"
+                },
+                "button": {
+                    "type": "string",
+                    "enum": ["left", "right", "middle"],
+                    "default": "left",
+                    "description": "Mouse button to click"
+                },
+                "double_click": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether to perform a double-click"
+                }
+            },
+            "required": ["x", "y"]
+        })
+    }
+    
+    async fn execute(&self, params: serde_json::Value, _session_id: &str) -> Result<ToolExecutionResult, String> {
+        let start_time = Instant::now();
+        
+        let x = params["x"].as_i64().ok_or("Missing required parameter: x")? as i32;
+        let y = params["y"].as_i64().ok_or("Missing required parameter: y")? as i32;
+        let button = params["button"].as_str().unwrap_or("left");
+        let double_click = params["double_click"].as_bool().unwrap_or(false);
+        
+        // Perform the click
+        click_at_coordinates(x, y, button, double_click).await?;
+        
+        let execution_time = start_time.elapsed().as_millis() as u64;
+        
+        Ok(ToolExecutionResult {
+            success: true,
+            result: serde_json::json!({
+                "clicked_at": {"x": x, "y": y},
+                "button": button,
+                "double_click": double_click,
+                "message": format!("Successfully clicked at ({}, {})", x, y)
+            }),
+            error: None,
+            execution_time_ms: execution_time,
+            tool_name: "click_at".to_string(),
+        })
+    }
+    
+    fn clone_box(&self) -> Box<dyn ComputerUseTool + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+// ========== COMPOUND TOOLS ==========
+
+#[derive(Clone)]
+pub struct ClickOnTextTool;
+
+#[async_trait]
+impl ComputerUseTool for ClickOnTextTool {
+    fn name(&self) -> &str { "click_on_text" }
+    
+    fn description(&self) -> String {
+        "Find text on screen using OCR and click on it (compound tool)".to_string()
+    }
+    
+    fn danger_level(&self) -> DangerLevel { DangerLevel::Medium }
+    
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text to find and click on"
+                },
+                "confidence_threshold": {
+                    "type": "number",
+                    "default": 0.8,
+                    "description": "Minimum confidence level for text recognition"
+                },
+                "button": {
+                    "type": "string",
+                    "enum": ["left", "right", "middle"],
+                    "default": "left",
+                    "description": "Mouse button to click"
+                }
+            },
+            "required": ["text"]
+        })
+    }
+    
+    async fn execute(&self, params: serde_json::Value, session_id: &str) -> Result<ToolExecutionResult, String> {
+        let start_time = Instant::now();
+        
+        let text_to_find = params["text"].as_str()
+            .ok_or("Missing required parameter: text")?;
+        
+        // Step 1: Find the text
+        let find_tool = FindTextTool;
+        let find_result = find_tool.execute(params.clone(), session_id).await?;
+        
+        if !find_result.success {
+            return Ok(ToolExecutionResult {
+                success: false,
+                result: serde_json::json!({}),
+                error: Some(format!("Failed to find text: {}", text_to_find)),
+                execution_time_ms: start_time.elapsed().as_millis() as u64,
+                tool_name: "click_on_text".to_string(),
+            });
+        }
+        
+        let text_locations = find_result.result["text_locations"].as_array()
+            .ok_or("Invalid find_text result format")?;
+            
+        if text_locations.is_empty() {
+            return Ok(ToolExecutionResult {
+                success: false,
+                result: serde_json::json!({
+                    "search_text": text_to_find,
+                    "matches_found": 0
+                }),
+                error: Some(format!("Text '{}' not found on screen", text_to_find)),
+                execution_time_ms: start_time.elapsed().as_millis() as u64,
+                tool_name: "click_on_text".to_string(),
+            });
+        }
+        
+        // Use the first (most confident) match
+        let best_match = &text_locations[0];
+        let x = best_match["center_x"].as_i64().ok_or("Invalid text location format")? as i32;
+        let y = best_match["center_y"].as_i64().ok_or("Invalid text location format")? as i32;
+        
+        // Step 2: Click at the found location
+        let click_params = serde_json::json!({
+            "x": x,
+            "y": y,
+            "button": params["button"].as_str().unwrap_or("left")
+        });
+        
+        let click_tool = ClickAtTool;
+        let click_result = click_tool.execute(click_params, session_id).await?;
+        
+        let execution_time = start_time.elapsed().as_millis() as u64;
+        
+        Ok(ToolExecutionResult {
+            success: click_result.success,
+            result: serde_json::json!({
+                "text_found": text_to_find,
+                "location": {"x": x, "y": y},
+                "confidence": best_match["confidence"],
+                "click_result": click_result.result
+            }),
+            error: click_result.error,
+            execution_time_ms: execution_time,
+            tool_name: "click_on_text".to_string(),
+        })
+    }
+    
+    fn clone_box(&self) -> Box<dyn ComputerUseTool + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+// ========== OCR HELPER FUNCTIONS ==========
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TextLocation {
+    text: String,
+    confidence: f32,
+    bounding_box: TextBoundingBox,
+    center_x: i32,
+    center_y: i32,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TextBoundingBox {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+async fn find_text_in_image(
+    base64_image: &str,
+    target_text: &str,
+    confidence_threshold: f64,
+    case_sensitive: bool,
+) -> Result<Vec<TextLocation>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        windows_ocr_find_text(base64_image, target_text, confidence_threshold, case_sensitive).await
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("OCR is only supported on Windows currently".to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+async fn windows_ocr_find_text(
+    base64_image: &str,
+    target_text: &str,
+    confidence_threshold: f64,
+    case_sensitive: bool,
+) -> Result<Vec<TextLocation>, String> {
+    use base64::Engine;
+    use windows::{
+        Media::Ocr::*,
+        Storage::Streams::*,
+        Graphics::Imaging::*,
+    };
+    
+    // Decode base64 image
+    let image_data = base64::engine::general_purpose::STANDARD
+        .decode(base64_image)
+        .map_err(|e| format!("Failed to decode base64 image: {}", e))?;
+    
+    // Create OCR engine
+    let ocr_engine = OcrEngine::TryCreateFromUserProfileLanguages()
+        .map_err(|e| format!("Failed to create OCR engine: {}", e))?;
+    
+    // Create memory stream from image data
+    let stream = InMemoryRandomAccessStream::new()
+        .map_err(|e| format!("Failed to create memory stream: {}", e))?;
+    
+    let writer = stream.GetOutputStreamAt(0)
+        .map_err(|e| format!("Failed to get output stream: {}", e))?;
+    
+    // Write image data to stream using DataWriter
+    let data_writer = windows::Storage::Streams::DataWriter::CreateDataWriter(&writer)
+        .map_err(|e| format!("Failed to create data writer: {}", e))?;
+    
+    data_writer.WriteBytes(&image_data)
+        .map_err(|e| format!("Failed to write bytes: {}", e))?;
+    
+    data_writer.StoreAsync()
+        .map_err(|e| format!("Failed to store data: {}", e))?
+        .get()
+        .map_err(|e| format!("Failed to complete store: {}", e))?;
+    
+    writer.FlushAsync()
+        .map_err(|e| format!("Failed to flush stream: {}", e))?
+        .get()
+        .map_err(|e| format!("Failed to complete flush: {}", e))?;
+    
+    // Create bitmap decoder
+    let decoder = BitmapDecoder::CreateAsync(&stream)
+        .map_err(|e| format!("Failed to create bitmap decoder: {}", e))?
+        .get()
+        .map_err(|e| format!("Failed to get bitmap decoder: {}", e))?;
+    
+    // Get software bitmap
+    let bitmap = decoder.GetSoftwareBitmapAsync()
+        .map_err(|e| format!("Failed to get software bitmap: {}", e))?
+        .get()
+        .map_err(|e| format!("Failed to complete bitmap operation: {}", e))?;
+    
+    // Perform OCR
+    let ocr_result = ocr_engine.RecognizeAsync(&bitmap)
+        .map_err(|e| format!("Failed to start OCR: {}", e))?
+        .get()
+        .map_err(|e| format!("Failed to complete OCR: {}", e))?;
+    
+    // Extract text and positions
+    let mut results = Vec::new();
+    let search_text = if case_sensitive { target_text.to_string() } else { target_text.to_lowercase() };
+    
+    let lines = ocr_result.Lines()
+        .map_err(|e| format!("Failed to get OCR lines: {}", e))?;
+    
+    for line in lines {
+        let words = line.Words()
+            .map_err(|e| format!("Failed to get line words: {}", e))?;
+        
+        for word in words {
+            let text = word.Text()
+                .map_err(|e| format!("Failed to get word text: {}", e))?
+                .to_string();
+            
+            let found_text = if case_sensitive { text.clone() } else { text.to_lowercase() };
+            
+            // Check if this word contains our target text
+            if found_text.contains(&search_text) {
+                let bounding_rect = word.BoundingRect()
+                    .map_err(|e| format!("Failed to get bounding rect: {}", e))?;
+                
+                // Windows OCR doesn't provide confidence per word, so we'll use a default high confidence
+                let confidence = 0.95_f32; // High confidence for Windows OCR
+                
+                if confidence >= confidence_threshold as f32 {
+                    let x = bounding_rect.X as i32;
+                    let y = bounding_rect.Y as i32;
+                    let width = bounding_rect.Width as i32;
+                    let height = bounding_rect.Height as i32;
+                    
+                    let center_x = x + width / 2;
+                    let center_y = y + height / 2;
+                    
+                    results.push(TextLocation {
+                        text: text.clone(),
+                        confidence,
+                        bounding_box: TextBoundingBox { x, y, width, height },
+                        center_x,
+                        center_y,
+                    });
+                }
+            }
+        }
+    }
+    
+    // Sort by confidence (highest first) and then by position (top to bottom, left to right)
+    results.sort_by(|a, b| {
+        b.confidence.partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.bounding_box.y.cmp(&b.bounding_box.y))
+            .then_with(|| a.bounding_box.x.cmp(&b.bounding_box.x))
+    });
+    
+    Ok(results)
+}
+
+async fn click_at_coordinates(x: i32, y: i32, button: &str, double_click: bool) -> Result<(), String> {
+    // For now, use the existing click implementation
+    // This will be platform-specific
+    #[cfg(target_os = "windows")]
+    {
+        windows_click_at(x, y, button, double_click).await
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Click not implemented for this platform".to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+async fn windows_click_at(x: i32, y: i32, button: &str, double_click: bool) -> Result<(), String> {
+    use winapi::um::winuser::{SetCursorPos, mouse_event, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP};
+    
+    unsafe {
+        // Move cursor to position
+        SetCursorPos(x, y);
+        
+        // Small delay to ensure cursor movement
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        
+        // Determine mouse events
+        let (down_event, up_event) = match button {
+            "right" => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+            "middle" => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+            _ => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP), // Default to left
+        };
+        
+        // Perform click
+        mouse_event(down_event, 0, 0, 0, 0);
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        mouse_event(up_event, 0, 0, 0, 0);
+        
+        // Double click if requested
+        if double_click {
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            mouse_event(down_event, 0, 0, 0, 0);
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            mouse_event(up_event, 0, 0, 0, 0);
+        }
+    }
+    
+    Ok(())
+}

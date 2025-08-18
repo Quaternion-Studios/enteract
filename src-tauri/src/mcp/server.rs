@@ -40,6 +40,13 @@ impl MCPSession {
         tools.insert("get_screen_info".to_string(), Box::new(crate::mcp::tools::GetScreenInfoTool));
         tools.insert("take_screenshot".to_string(), Box::new(crate::mcp::tools::ScreenshotTool));
         
+        // Register new atomic OCR tools
+        tools.insert("find_text".to_string(), Box::new(crate::mcp::tools::FindTextTool));
+        tools.insert("click_at".to_string(), Box::new(crate::mcp::tools::ClickAtTool));
+        
+        // Register compound tools (require approval)
+        tools.insert("click_on_text".to_string(), Box::new(crate::mcp::tools::ClickOnTextTool));
+        
         Self {
             id: session_id,
             config,
@@ -349,6 +356,111 @@ impl MCPSession {
         tool_infos
     }
     
+    pub async fn generate_execution_plan(
+        &self,
+        user_request: &str,
+        available_tools: Vec<ToolInfo>,
+    ) -> Result<ToolExecutionPlan, String> {
+        use uuid::Uuid;
+        
+        // For now, create a simple demo plan
+        // TODO: Replace with actual LLM call to generate intelligent plan
+        let plan_id = Uuid::new_v4().to_string();
+        
+        // Basic keyword-based planning (will be replaced with LLM)
+        let mut steps = Vec::new();
+        let request_lower = user_request.to_lowercase();
+        
+        if request_lower.contains("find") && request_lower.contains("text") {
+            if let Some(_) = available_tools.iter().find(|t| t.name == "find_text") {
+                let text_to_find = self.extract_quoted_text(user_request).unwrap_or_else(|| "Submit".to_string());
+                
+                steps.push(ToolStep {
+                    step_id: Uuid::new_v4().to_string(),
+                    tool_name: "find_text".to_string(),
+                    description: format!("Find text '{}' on screen", text_to_find),
+                    parameters: serde_json::json!({ "text": text_to_find }),
+                    depends_on: None,
+                    danger_level: DangerLevel::Low,
+                    estimated_duration_ms: Some(2000),
+                });
+            }
+        }
+        
+        if request_lower.contains("click") {
+            if let Some(_) = available_tools.iter().find(|t| t.name == "click") {
+                steps.push(ToolStep {
+                    step_id: Uuid::new_v4().to_string(),
+                    tool_name: "click".to_string(),
+                    description: "Click on the found text location".to_string(),
+                    parameters: serde_json::json!({}),
+                    depends_on: steps.last().map(|s| s.step_id.clone()),
+                    danger_level: DangerLevel::Medium,
+                    estimated_duration_ms: Some(500),
+                });
+            }
+        }
+        
+        if request_lower.contains("screenshot") {
+            if let Some(_) = available_tools.iter().find(|t| t.name == "take_screenshot") {
+                steps.push(ToolStep {
+                    step_id: Uuid::new_v4().to_string(),
+                    tool_name: "take_screenshot".to_string(),
+                    description: "Take a screenshot".to_string(),
+                    parameters: serde_json::json!({}),
+                    depends_on: None,
+                    danger_level: DangerLevel::Low,
+                    estimated_duration_ms: Some(1000),
+                });
+            }
+        }
+        
+        let overall_risk = steps.iter()
+            .map(|s| s.danger_level)
+            .max_by_key(|&level| match level {
+                DangerLevel::Low => 1,
+                DangerLevel::Medium => 2,
+                DangerLevel::High => 3,
+                DangerLevel::Critical => 4,
+            })
+            .unwrap_or(DangerLevel::Low);
+        
+        let requires_approval = steps.iter().any(|s| matches!(s.danger_level, DangerLevel::Medium | DangerLevel::High | DangerLevel::Critical));
+        
+        let plan = ToolExecutionPlan {
+            session_id: self.id.clone(),
+            plan_id,
+            user_request: user_request.to_string(),
+            steps,
+            overall_risk,
+            requires_approval,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        
+        self.log(
+            LogLevel::Info,
+            format!("Generated execution plan with {} steps", plan.steps.len()),
+            None,
+        ).await;
+        
+        Ok(plan)
+    }
+    
+    fn extract_quoted_text(&self, text: &str) -> Option<String> {
+        // Extract text from quotes like "Submit" or 'Submit'
+        if let Some(start) = text.find('"') {
+            if let Some(end) = text[start + 1..].find('"') {
+                return Some(text[start + 1..start + 1 + end].to_string());
+            }
+        }
+        if let Some(start) = text.find('\'') {
+            if let Some(end) = text[start + 1..].find('\'') {
+                return Some(text[start + 1..start + 1 + end].to_string());
+            }
+        }
+        None
+    }
+
     pub async fn cleanup(&self) -> Result<(), String> {
         self.log(LogLevel::Info, "Cleaning up session".to_string(), None).await;
         

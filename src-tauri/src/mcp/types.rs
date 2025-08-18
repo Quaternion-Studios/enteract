@@ -85,6 +85,46 @@ pub enum DangerLevel {
     Critical, // Destructive operations
 }
 
+// New types for LLM-driven MCP
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolExecutionPlan {
+    pub session_id: String,
+    pub plan_id: String,
+    pub user_request: String,
+    pub steps: Vec<ToolStep>,
+    pub overall_risk: DangerLevel,
+    pub requires_approval: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolStep {
+    pub step_id: String,
+    pub tool_name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+    pub depends_on: Option<String>, // Previous step ID
+    pub danger_level: DangerLevel,
+    pub estimated_duration_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionPlanApproval {
+    pub plan_id: String,
+    pub approved: bool,
+    pub approved_steps: Vec<String>, // Step IDs that are approved
+    pub reason: Option<String>,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextData {
+    pub step_id: String,
+    pub tool_name: String,
+    pub result: serde_json::Value,
+    pub success: bool,
+}
+
 // Internal types for approval workflow
 pub struct PendingApproval {
     pub request: ToolApprovalRequest,

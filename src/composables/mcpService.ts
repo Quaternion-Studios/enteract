@@ -170,6 +170,29 @@ export class MCPService {
         return
       }
 
+      // Check if any tools require approval
+      const compoundTools = ['click_on_text', 'click_at']
+      const requiresApproval = toolActions.some(action => compoundTools.includes(action.toolName))
+      
+      if (requiresApproval) {
+        // Show approval request
+        const currentHistory = SessionManager.getCurrentChatHistory().value
+        const messageIndex = currentHistory.findIndex(m => m.id === thinkingMessageId)
+        if (messageIndex !== -1) {
+          const toolDescriptions = toolActions.map(action => 
+            `• **${action.toolName}**: ${JSON.stringify(action.parameters)}`
+          ).join('\n')
+          
+          currentHistory[messageIndex].text = `🔧 **MCP Agent - Approval Required**\n\nI want to execute these tools:\n\n${toolDescriptions}\n\n⚠️ **These actions will interact with your computer. Proceed?**\n\n[This would show approval buttons in a real implementation]`
+          currentHistory[messageIndex].isStreaming = false
+        }
+        
+        // For demo purposes, we'll auto-approve after showing the message
+        // In a real implementation, this would wait for user interaction
+        console.log('🔒 [MCP] Approval required for compound tools. Auto-approving for demo...')
+        await new Promise(resolve => setTimeout(resolve, 2000))
+      }
+
       // Execute tools sequentially
       let results: string[] = []
       for (const action of toolActions) {
@@ -223,10 +246,43 @@ export class MCPService {
     }, 50)
   }
 
-  // Simple tool selection based on message keywords
+  // Enhanced tool selection with compound tools
   private static selectToolsForMessage(message: string, availableTools: any[]): { toolName: string, parameters: any }[] {
     const actions: { toolName: string, parameters: any }[] = []
     const lowerMessage = message.toLowerCase()
+
+    // Compound tool: Click on text (highest priority)
+    if ((lowerMessage.includes('click') && lowerMessage.includes('text')) || 
+        (lowerMessage.includes('click') && lowerMessage.includes('on'))) {
+      const clickOnTextTool = availableTools.find(tool => tool.name === 'click_on_text')
+      if (clickOnTextTool) {
+        // Extract quoted text or common button words
+        const textMatch = lowerMessage.match(/["']([^"']+)["']/) || 
+                         lowerMessage.match(/\b(submit|login|sign in|register|continue|next|back|cancel|ok|yes|no)\b/)
+        const textToFind = textMatch ? textMatch[1] || textMatch[0] : 'Submit'
+        
+        actions.push({
+          toolName: 'click_on_text',
+          parameters: { text: textToFind }
+        })
+        return actions // Return early - this is a compound action
+      }
+    }
+
+    // Atomic tool: Find text only
+    if (lowerMessage.includes('find') && lowerMessage.includes('text')) {
+      const findTextTool = availableTools.find(tool => tool.name === 'find_text')
+      if (findTextTool) {
+        const textMatch = lowerMessage.match(/["']([^"']+)["']/) || 
+                         lowerMessage.match(/\b(submit|login|sign in|register|continue|next)\b/)
+        const textToFind = textMatch ? textMatch[1] || textMatch[0] : 'Submit'
+        
+        actions.push({
+          toolName: 'find_text',
+          parameters: { text: textToFind }
+        })
+      }
+    }
 
     // Screenshot tools
     if (lowerMessage.includes('screenshot') || lowerMessage.includes('capture')) {
@@ -242,20 +298,30 @@ export class MCPService {
       }
     }
 
-    // Click tools
-    if (lowerMessage.includes('click')) {
-      const clickTool = availableTools.find(tool => 
-        tool.name.toLowerCase().includes('click')
-      )
-      if (clickTool) {
-        // Try to extract coordinates if mentioned
-        const coordMatch = lowerMessage.match(/(\d+)[,\s]+(\d+)/)
-        const params = coordMatch ? { x: parseInt(coordMatch[1]), y: parseInt(coordMatch[2]) } : {}
-        
-        actions.push({
-          toolName: clickTool.name,
-          parameters: params
-        })
+    // Atomic click at coordinates
+    if (lowerMessage.includes('click') && !actions.length) {
+      // Try to extract coordinates if mentioned
+      const coordMatch = lowerMessage.match(/(\d+)[,\s]+(\d+)/)
+      if (coordMatch) {
+        const clickAtTool = availableTools.find(tool => tool.name === 'click_at')
+        if (clickAtTool) {
+          actions.push({
+            toolName: 'click_at',
+            parameters: { 
+              x: parseInt(coordMatch[1]), 
+              y: parseInt(coordMatch[2]) 
+            }
+          })
+        }
+      } else {
+        // Fallback to old click tool
+        const clickTool = availableTools.find(tool => tool.name === 'click')
+        if (clickTool) {
+          actions.push({
+            toolName: clickTool.name,
+            parameters: {}
+          })
+        }
       }
     }
 
