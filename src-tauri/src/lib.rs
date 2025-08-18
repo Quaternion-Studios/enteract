@@ -12,6 +12,9 @@ mod ollama;
 mod screenshot;
 mod file_handler;
 mod data_store;
+mod sqlite_data_store; // SQLite data storage implementation
+mod migration_commands; // SQLite migration commands
+mod hybrid_data_store; // Hybrid JSON/SQLite data storage
 mod audio_loopback; // New audio loopback module
 mod system_prompts; // System prompts module
 mod system_info; // System information module
@@ -93,6 +96,22 @@ use mcp::{
     list_active_mcp_sessions, create_mcp_session_manager, get_mcp_tool_schema,
     get_mcp_session_status, create_execution_plan, approve_execution_plan,
     execute_approved_plan, MCPSessionManager
+};
+
+// Import migration commands
+use migration_commands::{
+    check_migration_status, migrate_to_sqlite, backup_json_files,
+    get_sqlite_stats, cleanup_json_files
+};
+
+// Import hybrid data store commands
+use hybrid_data_store::{
+    save_chat_sessions_hybrid, load_chat_sessions_hybrid,
+    save_conversations_hybrid, load_conversations_hybrid,
+    delete_conversation_hybrid, clear_all_conversations_hybrid,
+    list_backups_hybrid, restore_from_backup_hybrid,
+    save_conversation_message_hybrid, batch_save_conversation_messages_hybrid,
+    save_conversation_insight_hybrid, get_conversation_insights_hybrid
 };
 
 #[tauri::command]
@@ -292,6 +311,27 @@ pub fn run() {
             generate_mcp_enabled_response,
             create_mcp_session_for_ai,
             get_mcp_session_for_ai,
+            
+            // Migration commands
+            check_migration_status,
+            migrate_to_sqlite,
+            backup_json_files,
+            get_sqlite_stats,
+            cleanup_json_files,
+            
+            // Hybrid data storage commands (automatically choose JSON or SQLite)
+            save_chat_sessions_hybrid,
+            load_chat_sessions_hybrid,
+            save_conversations_hybrid,
+            load_conversations_hybrid,
+            delete_conversation_hybrid,
+            clear_all_conversations_hybrid,
+            list_backups_hybrid,
+            restore_from_backup_hybrid,
+            save_conversation_message_hybrid,
+            batch_save_conversation_messages_hybrid,
+            save_conversation_insight_hybrid,
+            get_conversation_insights_hybrid,
 
         ])
         .run(tauri::generate_context!())
