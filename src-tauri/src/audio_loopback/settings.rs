@@ -40,7 +40,7 @@ pub async fn save_audio_settings(settings: AudioDeviceSettings) -> Result<(), St
     fs::write(settings_path, json)
         .map_err(|e| format!("Failed to write settings file: {}", e))?;
     
-    println!("💾 Audio settings saved");
+    // println!("💾 Audio settings saved"); // Commented out: Audio loopback is working, reducing console noise for debugging focus
     Ok(())
 }
 
@@ -59,7 +59,7 @@ pub async fn load_audio_settings() -> Result<Option<AudioDeviceSettings>, String
     let settings: AudioDeviceSettings = serde_json::from_str(&json)
         .map_err(|e| format!("Failed to parse settings: {}", e))?;
     
-    println!("📂 Audio settings loaded");
+    // println!("📂 Audio settings loaded"); // Commented out: Audio loopback is working, reducing console noise for debugging focus
     Ok(Some(settings))
 }
 
@@ -74,7 +74,7 @@ pub async fn save_general_settings(settings: HashMap<String, serde_json::Value>)
     fs::write(settings_path, json)
         .map_err(|e| format!("Failed to write settings file: {}", e))?;
     
-    println!("💾 General settings saved");
+    // println!("💾 General settings saved"); // Commented out: Audio loopback is working, reducing console noise for debugging focus
     Ok(())
 }
 
@@ -93,6 +93,6 @@ pub async fn load_general_settings() -> Result<Option<HashMap<String, serde_json
     let settings: HashMap<String, serde_json::Value> = serde_json::from_str(&json)
         .map_err(|e| format!("Failed to parse settings: {}", e))?;
     
-    println!("📂 General settings loaded");
+    // println!("📂 General settings loaded"); // Commented out: Audio loopback is working, reducing console noise for debugging focus
     Ok(Some(settings))
 }

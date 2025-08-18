@@ -23,7 +23,7 @@ pub async fn start_audio_loopback_capture(
         }
     }
     
-    println!("🎤 Starting audio capture for device: {}", device_id);
+    // println!("🎤 Starting audio capture for device: {}", device_id); // Commented out: Audio loopback is working, reducing console noise for debugging focus
     
     // Create stop channel
     let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
@@ -34,7 +34,7 @@ pub async fn start_audio_loopback_capture(
     
     let handle = tokio::task::spawn_blocking(move || {
         if let Err(e) = run_audio_capture_loop_sync(device_id_clone, app_handle_clone, stop_rx) {
-            eprintln!("Audio capture error: {}", e);
+            // eprintln!("Audio capture error: {}", e); // Commented out: Audio loopback is working, reducing console noise for debugging focus
         }
     });
     
@@ -51,7 +51,7 @@ pub async fn start_audio_loopback_capture(
 
 #[tauri::command]
 pub async fn stop_audio_loopback_capture() -> Result<(), String> {
-    println!("⏹️ Stopping audio capture");
+    // println!("⏹️ Stopping audio capture"); // Commented out: Audio loopback is working, reducing console noise for debugging focus
     
     let (stop_tx, handle) = {
         let mut state = CAPTURE_STATE.lock().unwrap();
@@ -129,9 +129,10 @@ fn run_audio_capture_loop_sync(
     let h_event = audio_client.set_get_eventhandle()
         .map_err(|_| anyhow::anyhow!("Failed to get event handle"))?;
     
-    println!("✅ Audio capture initialized - {} Hz, {} channels, {} bits", 
-             format.get_samplespersec(), format.get_nchannels(), format.get_bitspersample());
-    println!("📊 Device sample rate: {} Hz, Whisper target: 16000 Hz", format.get_samplespersec());
+    // println!("✅ Audio capture initialized - {} Hz, {} channels, {} bits", 
+    //          format.get_samplespersec(), format.get_nchannels(), format.get_bitspersample());
+    // println!("📊 Device sample rate: {} Hz, Whisper target: 16000 Hz", format.get_samplespersec());
+    // Commented out: Audio loopback is working, reducing console noise for debugging focus
     
     // Validate format
     let bits_per_sample = format.get_bitspersample();
@@ -234,7 +235,7 @@ fn run_audio_capture_loop_sync(
         if is_completely_silent && frames_read > 100 {
             // Only log this occasionally to avoid spam
             if start_time.elapsed().as_secs() % 30 == 0 {
-                println!("⚠️ No system audio detected - check device selection");
+                // println!("⚠️ No system audio detected - check device selection"); // Commented out: Audio loopback is working, reducing console noise for debugging focus
             }
         }
         
@@ -267,8 +268,9 @@ fn run_audio_capture_loop_sync(
             let buffer_level = calculate_audio_level(&transcription_buffer);
             
             // Log buffer state every transcription attempt
-            println!("[CAPTURE] Buffer: {} samples, RMS: {:.6}, Level: {:.1}dB", 
-                     transcription_buffer.len(), buffer_rms, buffer_level);
+            // println!("[CAPTURE] Buffer: {} samples, RMS: {:.6}, Level: {:.1}dB", 
+            //          transcription_buffer.len(), buffer_rms, buffer_level);
+            // Commented out: Audio loopback is working, reducing console noise for debugging focus
             
             if buffer_rms > 0.00305 {  // Match Python's RMS threshold
                 // The transcription buffer already contains mono f32 samples at 16kHz
@@ -292,8 +294,9 @@ fn run_audio_capture_loop_sync(
                 // Important: We're passing 16kHz since we already resampled
                 let sample_rate = 16000;
                 
-                println!("[CAPTURE] Sending {} bytes for transcription (RMS: {:.6})", 
-                         pcm16_bytes.len(), buffer_rms);
+                // println!("[CAPTURE] Sending {} bytes for transcription (RMS: {:.6})", 
+                //          pcm16_bytes.len(), buffer_rms);
+                // Commented out: Audio loopback is working, reducing console noise for debugging focus
                 
                 tokio::spawn(async move {
                     match process_audio_for_transcription(
@@ -303,10 +306,10 @@ fn run_audio_capture_loop_sync(
                     ).await {
                         Ok(text) => {
                             if !text.is_empty() {
-                                println!("[CAPTURE] Transcription result: '{}'", text);
+                                // println!("[CAPTURE] Transcription result: '{}'", text); // Commented out: Audio loopback is working, reducing console noise for debugging focus
                             }
                         },
-                        Err(e) => println!("[CAPTURE] Transcription error: {}", e)
+                        Err(e) => {} // println!("[CAPTURE] Transcription error: {}", e) // Commented out: Audio loopback is working, reducing console noise for debugging focus
                     }
                 });
                 
@@ -351,7 +354,7 @@ fn run_audio_capture_loop_sync(
     }
     
     let _ = audio_client.stop_stream();
-    println!("Audio capture stopped");
+    // println!("Audio capture stopped"); // Commented out: Audio loopback is working, reducing console noise for debugging focus
     
     Ok(())
 }

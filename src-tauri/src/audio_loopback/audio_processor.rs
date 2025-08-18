@@ -15,7 +15,7 @@ pub async fn process_audio_for_transcription(
     app_handle: AppHandle
 ) -> Result<String, String> {
     // First process the audio through our pipeline to match Python's fast_audio_process
-    println!("[PROCESS] Input: {} bytes, {} Hz", audio_data.len(), sample_rate);
+    // println!("[PROCESS] Input: {} bytes, {} Hz", audio_data.len(), sample_rate); // Commented out: Audio loopback is working, reducing console noise for debugging focus
     
     let processed_samples = process_audio_chunk(
         &audio_data,
@@ -25,12 +25,12 @@ pub async fn process_audio_for_transcription(
         16000  // Target Whisper sample rate
     );
     
-    println!("[PROCESS] Output: {} samples at 16kHz", processed_samples.len());
+    // println!("[PROCESS] Output: {} samples at 16kHz", processed_samples.len()); // Commented out: Audio loopback is working, reducing console noise for debugging focus
     
     // Check minimum audio length (1.5 seconds at 16kHz)
     let min_samples = (16000.0 * 1.5) as usize;
     if processed_samples.len() < min_samples {
-        println!("[PROCESS] Too short: {} samples < {} required", processed_samples.len(), min_samples);
+        // println!("[PROCESS] Too short: {} samples < {} required", processed_samples.len(), min_samples); // Commented out: Audio loopback is working, reducing console noise for debugging focus
         return Ok("".to_string());
     }
     
@@ -77,7 +77,7 @@ pub async fn process_audio_for_transcription(
         Err(_) => "small".to_string() // Error loading settings, use default
     };
     
-    println!("[AUDIO_PROCESSOR] Using Whisper model: {}", model_size);
+    // println!("[AUDIO_PROCESSOR] Using Whisper model: {}", model_size); // Commented out: Audio loopback is working, reducing console noise for debugging focus
     
     let config = crate::speech::WhisperModelConfig {
         modelSize: model_size,
@@ -106,7 +106,7 @@ pub async fn process_audio_for_transcription(
                     return Ok("".to_string());
                 }
                 
-                println!("🎙️ LOOPBACK: {} (conf: {:.3})", cleaned_text, estimated_confidence);
+                // println!("🎙️ LOOPBACK: {} (conf: {:.3})", cleaned_text, estimated_confidence); // Commented out: Audio loopback is working, reducing console noise for debugging focus
                 log_transcription_debug(&format!("[MAIN SUCCESS] {} (conf: {:.3})", cleaned_text, estimated_confidence), rms, db_level);
                 
                 // Emit transcription event to frontend
@@ -138,13 +138,15 @@ pub fn process_audio_chunk(
     output_sample_rate: u32
 ) -> Vec<f32> {
     if audio_data.is_empty() || channels == 0 || (bits_per_sample != 16 && bits_per_sample != 32) {
-        println!("[CHUNK] Invalid input: empty={}, channels={}, bits={}", 
-                 audio_data.is_empty(), channels, bits_per_sample);
+        // println!("[CHUNK] Invalid input: empty={}, channels={}, bits={}", 
+        //          audio_data.is_empty(), channels, bits_per_sample);
+        // Commented out: Audio loopback is working, reducing console noise for debugging focus
         return Vec::new();
     }
     
-    println!("[CHUNK] Processing: {} bytes, {}bit, {}ch, {}Hz -> {}Hz",
-             audio_data.len(), bits_per_sample, channels, input_sample_rate, output_sample_rate);
+    // println!("[CHUNK] Processing: {} bytes, {}bit, {}ch, {}Hz -> {}Hz",
+    //          audio_data.len(), bits_per_sample, channels, input_sample_rate, output_sample_rate);
+    // Commented out: Audio loopback is working, reducing console noise for debugging focus
     
     // Step 1: Convert to i16 samples - MATCHING PYTHON EXACTLY
     let mut i16_samples = Vec::new();
@@ -288,7 +290,7 @@ fn log_transcription_debug(text: &str, rms: f32, db_level: f32) {
     };
     
     // Also log to console for debugging
-    println!("[DEBUG] {}", log_entry.trim());
+    // println!("[DEBUG] {}", log_entry.trim()); // Commented out: Audio loopback is working, reducing console noise for debugging focus
     
     let file_exists = log_path.exists();
     
@@ -298,7 +300,7 @@ fn log_transcription_debug(text: &str, rms: f32, db_level: f32) {
         .open(&log_path)
     {
         if !file_exists {
-            println!("[DEBUG] Creating debug log at: {:?}", log_path);
+            // println!("[DEBUG] Creating debug log at: {:?}", log_path); // Commented out: Audio loopback is working, reducing console noise for debugging focus
             let header = format!("=== Transcription Debug Log Started: {} ===\n\n", 
                 chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"));
             let _ = file.write_all(header.as_bytes());
@@ -306,7 +308,7 @@ fn log_transcription_debug(text: &str, rms: f32, db_level: f32) {
         let _ = file.write_all(log_entry.as_bytes());
         let _ = file.flush();
     } else {
-        println!("[DEBUG] Failed to open log file at: {:?}", log_path);
+        // println!("[DEBUG] Failed to open log file at: {:?}", log_path); // Commented out: Audio loopback is working, reducing console noise for debugging focus
     }
 }
 

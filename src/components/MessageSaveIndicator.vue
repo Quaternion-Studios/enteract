@@ -4,7 +4,7 @@
     <div 
       v-if="message?.persistenceState"
       class="save-status"
-      :class="`status-${message.persistenceState}`"
+      :class="[`status-${message.persistenceState}`, { 'show-saved': message.persistenceState === 'saved' && showSavedIndicator }]"
       :title="getStatusTooltip()"
     >
       <span v-if="message.persistenceState === 'pending'" class="status-icon">
@@ -19,7 +19,7 @@
         </svg>
       </span>
       
-      <span v-else-if="message.persistenceState === 'saved'" class="status-icon">
+      <span v-else-if="message.persistenceState === 'saved'" class="status-icon" :class="{ 'show-saved': showSavedIndicator }">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="20 6 9 17 4 12"/>
         </svg>
@@ -125,7 +125,7 @@ watch(() => props.message?.persistenceState, (newState) => {
     showSavedIndicator.value = true
     setTimeout(() => {
       showSavedIndicator.value = false
-    }, 3000) // Hide after 3 seconds
+    }, 5000) // Hide after 5 seconds - longer display for better visibility
   } else {
     showSavedIndicator.value = true
   }

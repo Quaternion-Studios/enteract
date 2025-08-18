@@ -27,7 +27,7 @@ impl WASAPILoopbackEnumerator {
     }
     
     pub fn enumerate_loopback_devices(&self) -> Result<Vec<AudioLoopbackDevice>> {
-        println!("🔍 Scanning for loopback devices...");
+        // println!("🔍 Scanning for loopback devices..."); // Commented out: Audio loopback is working, reducing console noise for debugging focus
         
         let mut loopback_devices = Vec::new();
         
@@ -57,7 +57,7 @@ impl WASAPILoopbackEnumerator {
         loopback_devices.sort_by(|a, b| a.id.cmp(&b.id));
         loopback_devices.dedup_by(|a, b| a.id == b.id);
         
-        println!("✅ Found {} loopback device(s)", loopback_devices.len());
+        // println!("✅ Found {} loopback device(s)", loopback_devices.len()); // Commented out: Audio loopback is working, reducing console noise for debugging focus
         Ok(loopback_devices)
     }
     
@@ -274,7 +274,7 @@ impl WASAPILoopbackEnumerator {
             matches!(d.device_type, DeviceType::Render) && 
             matches!(d.loopback_method, LoopbackMethod::RenderLoopback)
         ) {
-            println!("✓ Auto-selected: Default render device with loopback: {}", default_render.name);
+            // println!("✓ Auto-selected: Default render device with loopback: {}", default_render.name); // Commented out: Audio loopback is working, reducing console noise for debugging focus
             return Ok(Some(default_render.clone()));
         }
         
@@ -283,7 +283,7 @@ impl WASAPILoopbackEnumerator {
             matches!(d.device_type, DeviceType::Render) && 
             matches!(d.loopback_method, LoopbackMethod::RenderLoopback)
         ) {
-            println!("✓ Auto-selected: Render device with loopback: {}", render_device.name);
+            // println!("✓ Auto-selected: Render device with loopback: {}", render_device.name); // Commented out: Audio loopback is working, reducing console noise for debugging focus
             return Ok(Some(render_device.clone()));
         }
         
@@ -291,7 +291,7 @@ impl WASAPILoopbackEnumerator {
         if let Some(stereo_mix) = devices.iter().find(|d| 
             matches!(d.loopback_method, LoopbackMethod::StereoMix)
         ) {
-            println!("✓ Auto-selected: Stereo Mix device: {}", stereo_mix.name);
+            // println!("✓ Auto-selected: Stereo Mix device: {}", stereo_mix.name); // Commented out: Audio loopback is working, reducing console noise for debugging focus
             return Ok(Some(stereo_mix.clone()));
         }
         
@@ -299,12 +299,12 @@ impl WASAPILoopbackEnumerator {
         if let Some(capture_device) = devices.iter().find(|d| 
             matches!(d.device_type, DeviceType::Capture)
         ) {
-            println!("✓ Auto-selected: Capture device: {}", capture_device.name);
+            // println!("✓ Auto-selected: Capture device: {}", capture_device.name); // Commented out: Audio loopback is working, reducing console noise for debugging focus
             return Ok(Some(capture_device.clone()));
         }
         
         // Fallback: First available device
-        println!("⚠ No optimal device found, using first available: {}", devices[0].name);
+        // println!("⚠ No optimal device found, using first available: {}", devices[0].name); // Commented out: Audio loopback is working, reducing console noise for debugging focus
         Ok(Some(devices[0].clone()))
     }
     
