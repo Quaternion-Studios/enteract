@@ -76,14 +76,6 @@ export class StorageService {
       StorageService.isSaving = false
       console.error('❌ Failed to save chat sessions after retries:', error)
       
-      // Attempt to save to localStorage as fallback
-      try {
-        localStorage.setItem('chat_sessions_backup', JSON.stringify(chatSessions))
-        console.warn('⚠️ Saved to localStorage as fallback')
-      } catch (localError) {
-        console.error('❌ Failed to save to localStorage:', localError)
-      }
-      
       throw error // Re-throw for caller to handle
     }
   }
@@ -98,66 +90,21 @@ export class StorageService {
         return await invoke('load_chat_sessions')
       })
       
-      if (response.chats && response.chats.length > 0) {
-        console.log(`✅ Loaded ${response.chats.length} chat sessions from backend`)
-        return response.chats
-      }
+      console.log(`✅ Loaded ${response.chats.length} chat sessions from SQLite`)
+      return response.chats
       
-      // If no chats in backend, check localStorage backup
-      const backup = localStorage.getItem('chat_sessions_backup')
-      if (backup) {
-        try {
-          const backupChats = JSON.parse(backup)
-          console.warn('⚠️ Loaded chat sessions from localStorage backup')
-          // Try to save to backend
-          StorageService.saveAllChats(backupChats).catch(console.error)
-          return backupChats
-        } catch (parseError) {
-          console.error('Failed to parse localStorage backup:', parseError)
-        }
-      }
-      
-      return []
     } catch (error) {
       console.error('❌ Failed to load chat sessions:', error)
-      
-      // Attempt to load from localStorage as fallback
-      const backup = localStorage.getItem('chat_sessions_backup')
-      if (backup) {
-        try {
-          const backupChats = JSON.parse(backup)
-          console.warn('⚠️ Using localStorage backup due to backend failure')
-          return backupChats
-        } catch (parseError) {
-          console.error('Failed to parse localStorage backup:', parseError)
-        }
-      }
-      
       return []
     }
   }
   
-  // New backup management methods
-  static async listBackups(): Promise<BackupInfo[]> {
+  // Database management
+  static async getDatabaseInfo() {
     try {
-      const backups = await invoke<BackupInfo[]>('list_backups')
-      console.log(`✅ Found ${backups.length} backups`)
-      return backups
+      return await invoke('get_database_info')
     } catch (error) {
-      console.error('❌ Failed to list backups:', error)
-      return []
-    }
-  }
-  
-  static async restoreFromBackup(backupType: string, filename: string): Promise<void> {
-    try {
-      await invoke('restore_from_backup', { 
-        backupType, 
-        backupFilename: filename 
-      })
-      console.log('✅ Successfully restored from backup')
-    } catch (error) {
-      console.error('❌ Failed to restore from backup:', error)
+      console.error('❌ Failed to get database info:', error)
       throw error
     }
   }

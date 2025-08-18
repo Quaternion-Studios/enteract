@@ -49,43 +49,33 @@ export const useConversationStore = defineStore('conversation', () => {
   // Persistence key
   const STORAGE_KEY = 'conversation-sessions'
 
-  // Load sessions from Rust backend
+  // Load sessions from SQLite backend
   const loadSessions = async () => {
     try {
-      console.log('📁 Store: Attempting to load conversations from backend...')
+      console.log('📁 Store: Loading conversations from SQLite backend...')
       const response = await invoke<{conversations: ConversationSession[]}>('load_conversations')
       
-      // Migrate old sessions that don't have insights field
+      // Ensure all sessions have insights field
       sessions.value = response.conversations.map(session => ({
         ...session,
         insights: session.insights || [] // Add empty insights array if missing
       }))
       
-      console.log(`📁 Store: Successfully loaded ${sessions.value.length} conversation sessions from backend:`, sessions.value.map(s => ({ id: s.id, name: s.name, messageCount: s.messages.length, insightCount: s.insights?.length || 0 })))
+      console.log(`📁 Store: Successfully loaded ${sessions.value.length} conversation sessions:`, 
+        sessions.value.map(s => ({ 
+          id: s.id, 
+          name: s.name, 
+          messageCount: s.messages.length, 
+          insightCount: s.insights?.length || 0 
+        })))
     } catch (error) {
-      console.error('📁 Store: Failed to load conversation sessions from backend:', error)
-      // Fallback to localStorage for migration
-      try {
-        const stored = localStorage.getItem(STORAGE_KEY)
-        if (stored) {
-          const parsed = JSON.parse(stored)
-          // Migrate old sessions that don't have insights field
-          sessions.value = parsed.map((session: any) => ({
-            ...session,
-            insights: session.insights || [] // Add empty insights array if missing
-          }))
-          console.log(`📁 Store: Migrated ${parsed.length} conversation sessions from localStorage`)
-          // Save to backend and clear localStorage
-          await saveSessions()
-          localStorage.removeItem(STORAGE_KEY)
-        }
-      } catch (migrationError) {
-        console.error('📁 Store: Failed to migrate from localStorage:', migrationError)
-      }
+      console.error('📁 Store: Failed to load conversation sessions:', error)
+      // Initialize empty state - no localStorage fallback
+      sessions.value = []
     }
   }
 
-  // Save sessions to Rust backend with proper state management
+  // Save sessions to SQLite backend
   const saveSessions = async (forceImmediate = false) => {
     if (isSaving.value && !forceImmediate) {
       console.log('💾 Store: Save already in progress, will queue this save')
@@ -97,28 +87,15 @@ export const useConversationStore = defineStore('conversation', () => {
       isSaving.value = true
       pendingSave.value = false
       
-      console.log(`💾 Store: Attempting to save ${sessions.value.length} conversation sessions to backend...`)
-      console.log(`💾 Store: Sessions to save:`, sessions.value.map(s => ({ id: s.id, name: s.name, messageCount: s.messages.length, isActive: s.isActive, endTime: s.endTime })))
+      console.log(`💾 Store: Saving ${sessions.value.length} conversation sessions to SQLite...`)
       
       await invoke('save_conversations', {
         payload: { conversations: sessions.value }
       })
-      console.log(`💾 Store: Successfully saved ${sessions.value.length} conversation sessions to backend`)
-      
-      // Verify save by immediately loading back
-      const response = await invoke<{conversations: ConversationSession[]}>('load_conversations')
-      const savedCount = response.conversations.length
-      const expectedCount = sessions.value.length
-      
-      if (savedCount !== expectedCount) {
-        console.error(`💾 Store: Save verification failed! Expected ${expectedCount}, got ${savedCount}`)
-        throw new Error(`Save verification failed: expected ${expectedCount}, got ${savedCount}`)
-      }
-      
-      console.log(`💾 Store: Save verified successfully - ${savedCount} sessions persisted`)
+      console.log(`💾 Store: Successfully saved ${sessions.value.length} conversation sessions`)
       
     } catch (error) {
-      console.error('💾 Store: Failed to save conversation sessions to backend:', error)
+      console.error('💾 Store: Failed to save conversation sessions:', error)
       throw error // Re-throw to let caller handle
     } finally {
       isSaving.value = false
@@ -647,15 +624,11 @@ export const useConversationStore = defineStore('conversation', () => {
 
   // Get storage usage info
   const getStorageInfo = () => {
-    const data = localStorage.getItem(STORAGE_KEY)
-    const sizeBytes = data ? new Blob([data]).size : 0
-    const sizeKB = Math.round(sizeBytes / 1024 * 100) / 100
-
     return {
       sessionCount: sessions.value.length,
       totalMessages: sessions.value.reduce((sum, s) => sum + s.messages.length, 0),
-      storageSize: `${sizeKB} KB`,
-      lastSaved: data ? 'Auto-saved' : 'Never'
+      storageSize: 'SQLite Database',
+      lastSaved: 'Auto-saved to SQLite'
     }
   }
 

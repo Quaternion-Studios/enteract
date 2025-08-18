@@ -53,13 +53,7 @@ use file_handler::{
     upload_file_base64, validate_file_upload, get_file_upload_config,
     process_clipboard_image, cleanup_temp_files
 };
-use data::{
-    save_chat_sessions, load_chat_sessions, save_conversations, load_conversations, 
-    delete_conversation, clear_all_conversations, restore_from_backup, list_backups,
-    save_conversation_message, batch_save_conversation_messages, 
-    update_conversation_message, delete_conversation_message, ping_backend,
-    save_conversation_insight, get_conversation_insights
-};
+// Data storage imports are now handled above in the SQLite section
 
 // Import new audio loopback commands
 use audio_loopback::{
@@ -95,18 +89,17 @@ use mcp::{
     execute_approved_plan, MCPSessionManager
 };
 
-// Import migration and hybrid data store commands
+// Import SQLite data storage commands
 use data::{
-    // Migration commands
-    check_migration_status, migrate_to_sqlite, backup_json_files,
-    get_sqlite_stats, cleanup_json_files,
-    // Hybrid data store commands
-    save_chat_sessions_hybrid, load_chat_sessions_hybrid,
-    save_conversations_hybrid, load_conversations_hybrid,
-    delete_conversation_hybrid, clear_all_conversations_hybrid,
-    list_backups_hybrid, restore_from_backup_hybrid,
-    save_conversation_message_hybrid, batch_save_conversation_messages_hybrid,
-    save_conversation_insight_hybrid, get_conversation_insights_hybrid
+    // Database initialization and management
+    initialize_database, get_database_info, cleanup_legacy_files,
+    // Chat operations (Claude conversations)
+    save_chat_sessions, load_chat_sessions,
+    // Conversation operations (Audio conversations)
+    save_conversations, load_conversations, delete_conversation, clear_all_conversations,
+    save_conversation_message, batch_save_conversation_messages,
+    update_conversation_message, delete_conversation_message,
+    save_conversation_insight, get_conversation_insights, ping_backend
 };
 
 #[tauri::command]
@@ -156,6 +149,16 @@ pub fn run() {
             // Initialize MCP session manager
             let mcp_sessions = create_mcp_session_manager();
             app.manage(mcp_sessions);
+            
+            // Initialize SQLite database on first run
+            let app_handle_db = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::data::initialize_database(app_handle_db) {
+                    eprintln!("Failed to initialize database: {}", e);
+                } else {
+                    println!("✅ Database initialized successfully");
+                }
+            });
             
             Ok(())
         })
@@ -220,15 +223,20 @@ pub fn run() {
             process_clipboard_image,
             cleanup_temp_files,
             
-            // Data storage
+            // Database management
+            initialize_database,
+            get_database_info,
+            cleanup_legacy_files,
+            
+            // Chat data storage (Claude conversations)
             save_chat_sessions,
             load_chat_sessions,
+            
+            // Conversation data storage (Audio conversations)
             save_conversations,
             load_conversations,
             delete_conversation,
             clear_all_conversations,
-            restore_from_backup,
-            list_backups,
             
             // NEW: Audio loopback commands
             enumerate_loopback_devices,
@@ -307,26 +315,18 @@ pub fn run() {
             create_mcp_session_for_ai,
             get_mcp_session_for_ai,
             
-            // Migration commands
-            check_migration_status,
-            migrate_to_sqlite,
-            backup_json_files,
-            get_sqlite_stats,
-            cleanup_json_files,
+            // Message-level conversation operations
+            save_conversation_message,
+            batch_save_conversation_messages,
+            update_conversation_message,
+            delete_conversation_message,
             
-            // Hybrid data storage commands (automatically choose JSON or SQLite)
-            save_chat_sessions_hybrid,
-            load_chat_sessions_hybrid,
-            save_conversations_hybrid,
-            load_conversations_hybrid,
-            delete_conversation_hybrid,
-            clear_all_conversations_hybrid,
-            list_backups_hybrid,
-            restore_from_backup_hybrid,
-            save_conversation_message_hybrid,
-            batch_save_conversation_messages_hybrid,
-            save_conversation_insight_hybrid,
-            get_conversation_insights_hybrid,
+            // Conversation insights
+            save_conversation_insight,
+            get_conversation_insights,
+            
+            // Backend connectivity
+            ping_backend,
 
         ])
         .run(tauri::generate_context!())
