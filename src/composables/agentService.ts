@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { SessionManager } from './sessionManager'
 import { ContextManager } from './contextManager'
-import { enhancedRagService } from '../services/enhancedRagService'
+import { enhancedRagService } from '../services/rag'
 import { MCPService } from './mcpService'
 
 let messageIdCounter = 1

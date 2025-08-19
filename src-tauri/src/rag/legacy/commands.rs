@@ -1,4 +1,4 @@
-use crate::rag_system::{Document, DocumentChunk, RagSettings, RagSystem};
+use super::system::{Document, DocumentChunk, RagSettings, RagSystem};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Mutex;

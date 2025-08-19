@@ -10,9 +10,9 @@ use uuid::Uuid;
 use tauri::Manager;
 use sha2::{Sha256, Digest};
 
-use crate::simple_embedding_service::{SimpleEmbeddingService as EmbeddingService, EmbeddingConfig};
-use crate::search_service::{SearchService, SearchConfig, SearchResult};
-use crate::chunking_service::{ChunkingService, ChunkingConfig, TextChunk, extract_text_from_pdf, clean_text};
+use crate::rag::services::embedding::{SimpleEmbeddingService as EmbeddingService, EmbeddingConfig};
+use crate::rag::services::search::{SearchService, SearchConfig, SearchResult};
+use crate::rag::services::chunking::{ChunkingService, ChunkingConfig, TextChunk, extract_text_from_pdf, clean_text};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EnhancedDocument {
@@ -583,9 +583,9 @@ impl EnhancedRagSystem {
     }
     
     async fn index_chunks_for_search(&self, document_id: &str, chunks: &[EnhancedDocumentChunk], embeddings: &[Vec<f32>]) -> Result<()> {
-        let search_chunks: Vec<crate::search_service::DocumentChunk> = chunks.iter()
+        let search_chunks: Vec<crate::rag::services::search::DocumentChunk> = chunks.iter()
             .zip(embeddings.iter())
-            .map(|(chunk, embedding)| crate::search_service::DocumentChunk {
+            .map(|(chunk, embedding)| crate::rag::services::search::DocumentChunk {
                 id: chunk.id.clone(),
                 document_id: chunk.document_id.clone(),
                 content: chunk.content.clone(),

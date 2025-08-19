@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
-import { ragService, type Document, type DocumentChunk, type RagSettings } from '../services/ragService'
-import { enhancedRagService, type EnhancedDocument, type EnhancedDocumentChunk, type EnhancedRagSettings } from '../services/enhancedRagService'
+import { ragService, type Document, type DocumentChunk, type RagSettings } from '../../services/rag'
+import { enhancedRagService, type EnhancedDocument, type EnhancedDocumentChunk, type EnhancedRagSettings } from '../../services/rag'
 
 export interface UploadContext {
   source: 'chat' | 'settings'

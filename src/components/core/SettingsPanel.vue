@@ -12,7 +12,7 @@ import {
 import { useAIModels } from '../../composables/useAIModels'
 import { useTransparency } from '../../composables/useTransparency'
 import { useWindowRegistration } from '../../composables/useWindowRegistry'
-import { useRagDocuments } from '../../composables/useRagDocuments'
+import { useRagDocuments } from '../../composables/rag'
 import { invoke } from '@tauri-apps/api/core'
 import ModelsTab from './settings/ModelsTab.vue'
 import AudioTab from './settings/AudioTab.vue'
