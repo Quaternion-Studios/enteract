@@ -233,6 +233,14 @@ impl ContextEngine {
         let cache = self.document_cache.read().await;
         let mut documents: Vec<ContextDocument> = cache.values().cloned().collect();
         
+        eprintln!("🧠 Context cache has {} documents", documents.len());
+        
+        // If cache is empty, return empty for now - the sync function should populate it
+        if documents.is_empty() {
+            eprintln!("🧠 Context cache is empty - need to sync with RAG documents");
+            return Ok(Vec::new());
+        }
+        
         // Sort by access count and recency
         documents.sort_by(|a, b| {
             let score_a = a.access_count as f32 + (1.0 / (Utc::now() - a.last_accessed).num_hours().max(1) as f32);
@@ -242,6 +250,40 @@ impl ContextEngine {
         
         // Return top 10
         Ok(documents.into_iter().take(10).collect())
+    }
+    
+    /// Sync context cache with RAG documents
+    pub async fn sync_with_rag_documents(&self, rag_documents: Vec<super::super::enhanced::EnhancedDocument>) -> Result<()> {
+        let mut cache = self.document_cache.write().await;
+        
+        eprintln!("🧠 Syncing context cache with {} RAG documents", rag_documents.len());
+        
+        for rag_doc in rag_documents {
+            // Create or update context document
+            let context_doc = ContextDocument {
+                id: rag_doc.id.clone(),
+                file_path: rag_doc.file_path.clone(),
+                filename: rag_doc.file_name.clone(),
+                relevance_score: 0.5, // Default relevance
+                access_count: rag_doc.access_count as u32,
+                last_accessed: rag_doc.last_accessed
+                    .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|| Utc::now()),
+                content_preview: Some(rag_doc.content.chars().take(200).collect()),
+                embedding_status: if rag_doc.is_cached {
+                    EmbeddingStatus::Ready
+                } else {
+                    EmbeddingStatus::Pending
+                },
+                metadata: HashMap::new(),
+            };
+            
+            cache.insert(rag_doc.id, context_doc);
+        }
+        
+        eprintln!("🧠 Context cache now has {} documents", cache.len());
+        Ok(())
     }
     
     pub async fn update_document_access(

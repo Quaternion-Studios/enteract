@@ -634,42 +634,76 @@ impl EnhancedRagSystem {
     }
     
     pub async fn search_documents(&self, query: &str, context_document_ids: Vec<String>) -> Result<Vec<EnhancedDocumentChunk>> {
+        eprintln!("🔍 Starting search for query: '{}' with {} context documents", query, context_document_ids.len());
+        
         // Update access count for queried documents
         self.update_document_access(&context_document_ids)?;
         
         // Generate query embedding
         let query_embedding = if self.embedding_service.is_initialized() {
+            eprintln!("🔍 Embedding service is initialized, generating query embedding");
             match self.embedding_service.embed_query(query) {
-                Ok(emb) => Some(emb),
+                Ok(emb) => {
+                    eprintln!("🔍 Query embedding generated successfully");
+                    Some(emb)
+                },
                 Err(e) => {
-                    eprintln!("Failed to generate query embedding: {}", e);
+                    eprintln!("❌ Failed to generate query embedding: {}", e);
                     None
                 }
             }
         } else {
+            eprintln!("⚠️ Embedding service not initialized, will use BM25 only");
             None
         };
         
         // Perform search
         let search_results = if let Some(embedding) = query_embedding {
+            eprintln!("🔍 Using hybrid search (BM25 + vector)");
             // Use hybrid search (BM25 + vector)
             self.search_service.hybrid_search(query, &embedding, 20)?
         } else {
+            eprintln!("🔍 Using BM25 search only");
             // Fall back to BM25 only
             self.search_service.search_bm25(query, 20)?
         };
         
-        // Filter by context documents if specified
+        eprintln!("🔍 Search returned {} initial results", search_results.len());
+        
+        // Filter by context documents if specified, but also log for debugging
         let filtered_results = if context_document_ids.is_empty() {
+            eprintln!("🔍 No context filter applied, returning {} results", search_results.len());
             search_results
         } else {
-            search_results.into_iter()
-                .filter(|result| context_document_ids.contains(&result.document_id))
-                .collect()
+            eprintln!("🔍 Filtering {} results by {} context documents: {:?}", 
+                search_results.len(), context_document_ids.len(), context_document_ids);
+            
+            let filtered: Vec<_> = search_results.iter()
+                .filter(|result| {
+                    let matches = context_document_ids.contains(&result.document_id);
+                    if !matches {
+                        eprintln!("🔍 Document {} not in context filter", result.document_id);
+                    }
+                    matches
+                })
+                .cloned()
+                .collect();
+            
+            eprintln!("🔍 After filtering: {} results remaining", filtered.len());
+            
+            // If no results after filtering, return original results as fallback
+            if filtered.is_empty() && !search_results.is_empty() {
+                eprintln!("🔍 No filtered results found, returning unfiltered results as fallback");
+                search_results
+            } else {
+                filtered
+            }
         };
         
         // Convert search results to enhanced document chunks
+        eprintln!("🔍 Converting {} filtered results to enhanced chunks", filtered_results.len());
         let enhanced_chunks = self.convert_search_results_to_chunks(filtered_results)?;
+        eprintln!("🔍 Successfully converted to {} enhanced chunks", enhanced_chunks.len());
         
         Ok(enhanced_chunks)
     }
@@ -678,7 +712,12 @@ impl EnhancedRagSystem {
         let conn = Connection::open(&self.db_path)?;
         let mut chunks = Vec::new();
         
-        for result in search_results {
+        eprintln!("🔍 Converting {} search results to chunks", search_results.len());
+        
+        for (i, result) in search_results.iter().enumerate() {
+            eprintln!("🔍 Processing result {}: chunk_id={}, document_id={}, score={}", 
+                i, result.chunk_id, result.document_id, result.score);
+            
             let mut stmt = conn.prepare(
                 "SELECT id, document_id, chunk_index, content, start_char, end_char, token_count, metadata
                  FROM enhanced_document_chunks WHERE id = ?1"
@@ -700,11 +739,34 @@ impl EnhancedRagSystem {
                 })
             });
             
-            if let Ok(chunk) = chunk_result {
-                chunks.push(chunk);
+            match chunk_result {
+                Ok(chunk) => {
+                    eprintln!("✅ Found chunk in DB: {}", chunk.id);
+                    chunks.push(chunk);
+                },
+                Err(e) => {
+                    eprintln!("❌ Failed to find chunk {} in database: {}", result.chunk_id, e);
+                    // Create a fallback chunk from search result
+                    let fallback_chunk = EnhancedDocumentChunk {
+                        id: result.chunk_id.clone(),
+                        document_id: result.document_id.clone(),
+                        chunk_index: 0,
+                        content: result.content.clone(),
+                        start_char: 0,
+                        end_char: result.content.len() as i32,
+                        token_count: result.content.split_whitespace().count() as i32,
+                        embedding: None,
+                        similarity_score: Some(result.score),
+                        bm25_score: Some(result.bm25_score),
+                        metadata: result.metadata.clone(),
+                    };
+                    eprintln!("🔄 Created fallback chunk for {}", result.chunk_id);
+                    chunks.push(fallback_chunk);
+                }
             }
         }
         
+        eprintln!("🔍 Final conversion result: {} chunks created", chunks.len());
         Ok(chunks)
     }
     

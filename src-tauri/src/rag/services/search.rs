@@ -222,6 +222,14 @@ impl SearchService {
         // Get vector results
         let vector_results = self.search_vector(query_embedding, limit * 2)?;
         
+        // If vector search is not implemented, just return BM25 results
+        if vector_results.is_empty() {
+            eprintln!("🔍 Vector search returned no results, using BM25 only");
+            let mut results = bm25_results;
+            results.truncate(limit);
+            return Ok(results);
+        }
+        
         // Perform reciprocal rank fusion
         let fused_results = self.reciprocal_rank_fusion(bm25_results, vector_results, limit)?;
         

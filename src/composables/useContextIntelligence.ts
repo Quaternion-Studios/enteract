@@ -75,8 +75,10 @@ class ContextIntelligenceService {
   
   async loadCachedDocuments() {
     try {
+      console.log('🧠 Loading cached context documents...')
       // Load from backend
       const cached = await invoke<ContextDocument[]>('get_cached_context_documents')
+      console.log('🧠 Loaded', cached.length, 'cached documents')
       
       // Sort by access count and relevance score
       const sortedDocs = cached.sort((a, b) => {
@@ -86,20 +88,37 @@ class ContextIntelligenceService {
       })
       
       this.contextCache.value = new Map(sortedDocs.map(doc => [doc.id, doc]))
+      console.log('🧠 Context cache initialized with', this.contextCache.value.size, 'documents')
     } catch (error) {
-      console.error('Failed to load cached documents:', error)
+      console.error('🧠 Failed to load cached documents, continuing with empty cache:', error)
+      // Initialize with empty cache to prevent undefined errors
+      this.contextCache.value = new Map()
     }
   }
   
   async initializeSession() {
     try {
       // Use a default session ID for now, can be enhanced later to use actual chat IDs
+      const chatId = `session_${Date.now()}`
+      console.log('🧠 Initializing context session:', chatId)
+      
       const session = await invoke<ContextSession>('initialize_context_session', {
-        chatId: `session_${Date.now()}`
+        chatId
       })
       this.contextSession.value = session
+      console.log('🧠 Context session initialized successfully:', session)
     } catch (error) {
-      console.error('Failed to initialize context session:', error)
+      console.error('🧠 Failed to initialize context session, creating fallback:', error)
+      // Create a fallback session to prevent undefined errors
+      this.contextSession.value = {
+        id: `fallback_${Date.now()}`,
+        chat_id: `session_${Date.now()}`,
+        active_documents: [],
+        suggested_documents: [],
+        context_mode: 'auto',
+        created_at: new Date(),
+        updated_at: new Date()
+      }
     }
   }
   
@@ -196,6 +215,7 @@ class ContextIntelligenceService {
   }
   
   async selectDocuments(mode: ContextMode, query?: string): Promise<string[]> {
+    console.log('🧠 Selecting documents with mode:', mode, 'query:', query)
     switch (mode) {
       case 'auto':
         return this.selectAutoDocuments()
@@ -204,10 +224,28 @@ class ContextIntelligenceService {
       case 'search':
         return query ? await this.searchDocuments(query) : []
       case 'all':
-        return Array.from(this.contextCache.value.keys())
+        const allDocs = Array.from(this.contextCache.value.keys())
+        console.log('🧠 All mode: returning', allDocs.length, 'documents:', allDocs)
+        
+        // Fallback: if context cache is empty, try to get documents from RAG system directly
+        if (allDocs.length === 0) {
+          console.warn('🧠 Context cache is empty, trying to get documents from RAG system...')
+          try {
+            const ragDocuments = await invoke<any[]>('get_all_documents')
+            const ragDocIds = ragDocuments.map(doc => doc.id)
+            console.log('🧠 Fallback: using', ragDocIds.length, 'RAG documents:', ragDocIds)
+            return ragDocIds
+          } catch (error) {
+            console.error('🧠 Failed to get RAG documents as fallback:', error)
+            return []
+          }
+        }
+        
+        return allDocs
       case 'none':
         return []
       default:
+        console.warn('🧠 Unknown context mode:', mode)
         return []
     }
   }

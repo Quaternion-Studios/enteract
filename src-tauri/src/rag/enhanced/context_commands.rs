@@ -29,14 +29,22 @@ pub async fn initialize_context_session(
 pub async fn get_cached_context_documents(
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<Vec<ContextDocument>, String> {
-    let context_engine = {
+    let (context_engine, rag_system) = {
         let rag_state = state.0.lock().map_err(|e| e.to_string())?;
         match &*rag_state {
-            Some(system) => system.context_engine.clone(),
+            Some(system) => (system.context_engine.clone(), system.clone()),
             None => return Err("RAG system not initialized".to_string())
         }
     };
     
+    // First, sync context cache with RAG documents
+    let rag_documents = rag_system.get_all_documents().map_err(|e| e.to_string())?;
+    context_engine
+        .sync_with_rag_documents(rag_documents)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    // Then return cached documents
     context_engine
         .get_cached_context_documents()
         .await
