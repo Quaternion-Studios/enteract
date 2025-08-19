@@ -179,45 +179,7 @@ pub async fn get_mcp_session_status(
 }
 
 // New LLM-driven MCP commands
-#[tauri::command]
-pub async fn create_execution_plan(
-    session_id: String,
-    user_request: String,
-    app_handle: AppHandle,
-    sessions: State<'_, MCPSessionManager>,
-) -> Result<ToolExecutionPlan, String> {
-    let sessions_guard = sessions.lock().await;
-    let session = sessions_guard.get(&session_id)
-        .ok_or(format!("Session not found: {}", session_id))?;
-    
-    // Get available tools for the LLM to plan with
-    let available_tools = session.get_available_tools().await;
-    
-    // Call LLM to generate execution plan
-    session.generate_execution_plan(&user_request, available_tools).await
-}
 
-#[tauri::command]
-pub async fn approve_execution_plan(
-    plan_approval: ExecutionPlanApproval,
-    _sessions: State<'_, MCPSessionManager>, // Add underscore
-) -> Result<(), String> {
-    // Store the approval for later execution
-    println!("✅ Execution plan approved: {}", plan_approval.plan_id);
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn execute_approved_plan(
-    plan_id: String,
-    _sessions: State<'_, MCPSessionManager>, // Add underscore
-) -> Result<Vec<ToolExecutionResult>, String> {
-    // Execute the approved plan step by step
-    println!("🚀 Executing plan: {}", plan_id);
-    
-    // TODO: Implement step-by-step execution with context passing
-    Ok(vec![])
-}
 
 // Initialize the MCP session manager
 #[tauri::command]
