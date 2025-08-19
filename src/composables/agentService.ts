@@ -129,7 +129,7 @@ export class AgentService {
         SessionManager.createNewChat(selectedModel)
       }
       
-      await MCPService.processEnteractMessage(userMessage, selectedModel)
+      await MCPService.processEnteractMessageSimpleLLM(userMessage, selectedModel)
       return
     }
 

@@ -719,10 +719,13 @@ pub async fn generate_ollama_response(model: String, prompt: String) -> Result<S
     let options = if gpu_layers > 0 {
         Some(serde_json::json!({
             "num_gpu": gpu_layers,
-            "num_thread": 4
+            "num_thread": 4,
+            "temperature": 0.1 // Add small temperature to prevent caching
         }))
     } else {
-        None
+        Some(serde_json::json!({
+            "temperature": 0.1 // Add small temperature to prevent caching
+        }))
     };
     
     let request = GenerateRequest {

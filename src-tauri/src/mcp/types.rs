@@ -77,14 +77,13 @@ pub struct ToolInfo {
     pub parameters_schema: serde_json::Value,
 }
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)] // Add PartialEq here
 pub enum DangerLevel {
     Low,      // Reading data, getting cursor position
     Medium,   // Clicking, typing, scrolling
     High,     // File operations, system commands
     Critical, // Destructive operations
 }
-
 // New types for LLM-driven MCP
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolExecutionPlan {
@@ -233,4 +232,96 @@ pub struct ScreenshotResult {
     pub width: u32,
     pub height: u32,
     pub format: String,
+}
+
+// Add to existing src-tauri/src/mcp/types.rs
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionContext {
+    pub session_id: String,
+    pub screen_width: u32,
+    pub screen_height: u32,
+    pub cursor_x: i32,
+    pub cursor_y: i32,
+    pub previous_actions: Vec<String>,
+}
+
+impl ExecutionContext {
+    pub fn new() -> Self {
+        Self {
+            session_id: String::new(),
+            screen_width: 1920,
+            screen_height: 1080,
+            cursor_x: 0,
+            cursor_y: 0,
+            previous_actions: Vec::new(),
+        }
+    }
+    
+    pub fn update_from_result(&mut self, step_id: &str, result: &ToolExecutionResult) {
+        match result.tool_name.as_str() {
+            "get_cursor_position" => {
+                if let (Some(x), Some(y)) = (result.result.get("x"), result.result.get("y")) {
+                    if let (Some(x_val), Some(y_val)) = (x.as_i64(), y.as_i64()) {
+                        self.cursor_x = x_val as i32;
+                        self.cursor_y = y_val as i32;
+                    }
+                }
+            },
+            "get_screen_info" => {
+                if let (Some(w), Some(h)) = (result.result.get("width"), result.result.get("height")) {
+                    if let (Some(w_val), Some(h_val)) = (w.as_u64(), h.as_u64()) {
+                        self.screen_width = w_val as u32;
+                        self.screen_height = h_val as u32;
+                    }
+                }
+            },
+            _ => {}
+        }
+        
+        self.previous_actions.push(format!("{}: {}", step_id, result.tool_name));
+        
+        // Keep only last 5 actions
+        if self.previous_actions.len() > 5 {
+            self.previous_actions.remove(0);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanningProgress {
+    pub session_id: String,
+    pub iteration: u32,
+    pub max_iterations: u32,
+    pub status: PlanningStatus,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PlanningStatus {
+    Analyzing,
+    Questioning,
+    Planning,
+    Validating,
+    Complete,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionProgress {
+    pub session_id: String,
+    pub step_number: usize,
+    pub total_steps: usize,
+    pub step_description: String,
+    pub tool_name: String,
+    pub status: ExecutionStepStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ExecutionStepStatus {
+    Pending,
+    Executing,
+    WaitingApproval,
+    Complete,
+    Failed,
 }

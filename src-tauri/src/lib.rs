@@ -86,7 +86,8 @@ use mcp::{
     execute_mcp_tool, respond_to_mcp_approval, get_mcp_session_logs, 
     list_active_mcp_sessions, create_mcp_session_manager, get_mcp_tool_schema,
     get_mcp_session_status, create_execution_plan, approve_execution_plan,
-    execute_approved_plan, MCPSessionManager
+    execute_approved_plan, create_execution_plan_iterative, execute_plan_interactive,
+    MCPSessionManager
 };
 
 // Import SQLite data storage commands
@@ -352,6 +353,8 @@ pub fn run() {
             create_execution_plan,
             approve_execution_plan,
             execute_approved_plan,
+            create_execution_plan_iterative,
+            execute_plan_interactive,
             // Enhanced AI commands with MCP
             generate_mcp_enabled_response,
             create_mcp_session_for_ai,

@@ -1,8 +1,14 @@
 // mcpService.ts - Handles MCP (Model Context Protocol) operations and tool calling
 import { invoke } from '@tauri-apps/api/core'
 import { SessionManager } from './sessionManager'
+import { listen } from '@tauri-apps/api/event'
 
 let messageIdCounter = 1000 // Use higher counter to avoid conflicts
+
+// Generate unique message ID to prevent database conflicts (i32 compatible)
+function generateUniqueMessageId(): number {
+  return Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 1000) // Use seconds, not milliseconds
+}
 
 export interface MCPSessionInfo {
   id: string
@@ -73,6 +79,232 @@ export class MCPService {
     }
   }
 
+   static async handleEnteractMessage(message: string) {
+    try {
+      console.log('🎯 [MCP] @enteract triggered - entering intelligent MCP workflow')
+      
+      // Clean the message
+      const cleanMessage = message.replace(/^@enteract\s*/i, '').trim()
+      if (!cleanMessage) {
+        SessionManager.addMessageToCurrentChat({
+          id: messageIdCounter++,
+          sender: 'assistant',
+          text: '🎯 **MCP Agent** - Please provide a request after @enteract\n\nExample: `@enteract take a screenshot and find the submit button`',
+          timestamp: new Date(),
+          messageType: 'text'
+        })
+        return
+      }
+
+      // Add user message to chat
+      SessionManager.addMessageToCurrentChat({
+        id: messageIdCounter++,
+        sender: 'user',
+        text: message,
+        timestamp: new Date(),
+        messageType: 'text'
+      })
+
+      // Ensure MCP session is active
+      const sessionId = await MCPService.ensureMCPSession()
+      console.log('🎯 [MCP] Session ready:', sessionId)
+      
+      // Start planning phase
+      const planningMessageId = messageIdCounter++
+      SessionManager.addMessageToCurrentChat({
+        id: planningMessageId,
+        sender: 'assistant',
+        text: '🎯 **MCP Planning** - Round 1: Analyzing request and generating intelligent execution plan...▋',
+        timestamp: new Date(),
+        messageType: 'text',
+        isStreaming: true
+      })
+
+      setTimeout(() => MCPService.scrollChatToBottom(), 50)
+
+      // Listen for planning progress
+      const planningListener = await listen('mcp_planning_progress', (event: any) => {
+        const progress = event.payload
+        MCPService.updatePlanningProgress(planningMessageId, progress)
+      })
+
+      try {
+        // Generate intelligent execution plan
+        const executionPlan = await invoke<any>('create_execution_plan_iterative', {
+          sessionId,
+          userRequest: cleanMessage
+        })
+
+        console.log('🎯 [MCP] Generated execution plan:', executionPlan)
+
+        // Show plan to user for approval
+        await MCPService.displayPlanForApproval(planningMessageId, executionPlan)
+
+        // Wait for user approval (for now, simulate approval)
+        console.log('🔒 [MCP] Awaiting user approval...')
+        await new Promise(resolve => setTimeout(resolve, 2000))
+
+        // Execute the approved plan
+        await MCPService.executeApprovedPlanInteractive(executionPlan, planningMessageId)
+
+      } finally {
+        // Clean up listener
+        planningListener()
+      }
+
+    } catch (error) {
+      console.error('❌ [MCP] Error in @enteract workflow:', error)
+      SessionManager.addMessageToCurrentChat({
+        id: messageIdCounter++,
+        sender: 'assistant',
+        text: `❌ **MCP Error**: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
+        timestamp: new Date(),
+        messageType: 'text'
+      })
+    }
+  }
+
+  // Update planning progress in real-time
+  private static updatePlanningProgress(messageId: number, progress: any) {
+    const currentHistory = SessionManager.getCurrentChatHistory().value
+    const messageIndex = currentHistory.findIndex(m => m.id === messageId)
+    if (messageIndex !== -1) {
+      const statusEmoji: Record<string, string> = { // Add explicit typing
+        'Analyzing': '🔍',
+        'Questioning': '❓',
+        'Planning': '📋',
+        'Validating': '✅',
+        'Complete': '🎯',
+        'Failed': '❌'
+      }
+
+      const emoji = statusEmoji[progress.status] || '🔄' // Now properly typed
+
+      currentHistory[messageIndex].text = `${emoji} **MCP Planning** - Round ${progress.iteration}/${progress.max_iterations}: ${progress.message}${progress.status !== 'Complete' && progress.status !== 'Failed' ? '▋' : ''}`
+      
+      if (progress.status === 'Complete' || progress.status === 'Failed') {
+        currentHistory[messageIndex].isStreaming = false
+      }
+    }
+  }
+
+  // Display execution plan for user approval
+  private static async displayPlanForApproval(messageId: number, executionPlan: any) {
+    const currentHistory = SessionManager.getCurrentChatHistory().value
+    const messageIndex = currentHistory.findIndex(m => m.id === messageId)
+    if (messageIndex !== -1) {
+      const stepDescriptions = executionPlan.steps.map((step: any, i: number) => 
+        `**${i + 1}.** ${step.tool_name}: ${step.description}\n   ${step.requires_permission ? '🔒 ' : ''}Parameters: \`${JSON.stringify(step.parameters)}\``
+      ).join('\n\n')
+      
+      const riskLevels: Record<string, string> = { // Add explicit typing
+        'Low': '🟢 Low Risk',
+        'Medium': '🟡 Medium Risk', 
+        'High': '🟠 High Risk',
+        'Critical': '🔴 Critical Risk'
+      }
+      
+      const riskLevel = riskLevels[executionPlan.overall_risk] || '🟡 Medium Risk' // Now properly typed
+
+      currentHistory[messageIndex].text = `🎯 **Intelligent Execution Plan**
+
+  **Request**: ${executionPlan.user_request}
+  **Steps**: ${executionPlan.steps.length}
+  **Risk Level**: ${riskLevel}
+
+  ${stepDescriptions}
+
+  ⚠️ **Ready to execute ${executionPlan.steps.length} steps. Approve execution?**
+
+  ${executionPlan.steps.some((s: any) => s.requires_permission) ? '🔒 Some steps require individual approval during execution.' : ''}`
+      
+      currentHistory[messageIndex].isStreaming = false
+    }
+  }
+
+  // Execute approved plan with real-time updates
+  private static async executeApprovedPlanInteractive(executionPlan: any, messageId: number) {
+    const results: string[] = []
+    // Remove: let currentStepIndex = 0  // This was unused
+
+    // Listen for execution progress
+    const progressListener = await listen('mcp_execution_progress', (event: any) => {
+      const progress = event.payload
+      MCPService.updateExecutionProgress(messageId, progress, results)
+    })
+
+    try {
+      // Execute the plan
+      const executionResults = await invoke<any[]>('execute_plan_interactive', {
+        plan: executionPlan
+      })
+
+      // Process results
+      for (let i = 0; i < executionResults.length; i++) {
+        const result = executionResults[i]
+        const step = executionPlan.steps[i]
+        
+        if (result.success) {
+          results.push(`✅ **Step ${i + 1}**: ${step.description} - ${MCPService.formatToolResult(result)}`)
+        } else {
+          results.push(`❌ **Step ${i + 1}**: ${step.description} - ${result.error || 'Failed'}`)
+        }
+      }
+
+      // Show final results
+      MCPService.displayFinalResults(messageId, results, executionPlan.steps.length)
+
+    } catch (error) {
+      results.push(`❌ **Execution Error**: ${error}`)
+      MCPService.displayFinalResults(messageId, results, executionPlan.steps.length)
+    } finally {
+      progressListener()
+    }
+  }
+
+  // Update execution progress
+  private static updateExecutionProgress(messageId: number, progress: any, results: string[]) {
+    const currentHistory = SessionManager.getCurrentChatHistory().value
+    const messageIndex = currentHistory.findIndex(m => m.id === messageId)
+    if (messageIndex !== -1) {
+      const statusEmojis: Record<string, string> = { // Add explicit typing
+        'Pending': '⏳',
+        'Executing': '🔄',
+        'WaitingApproval': '🔒',
+        'Complete': '✅',
+        'Failed': '❌'
+      }
+      
+      const statusEmoji = statusEmojis[progress.status] || '🔄' // Now properly typed
+
+      currentHistory[messageIndex].text = `🎯 **MCP Execution Progress**
+
+  ${results.join('\n\n')}
+
+  ${statusEmoji} **Currently executing step ${progress.step_number}/${progress.total_steps}**: ${progress.step_description}...`
+    }
+    
+    setTimeout(() => MCPService.scrollChatToBottom(), 10)
+  }
+
+
+  // Display final execution results
+  private static displayFinalResults(messageId: number, results: string[], totalSteps: number) {
+    const currentHistory = SessionManager.getCurrentChatHistory().value
+    const messageIndex = currentHistory.findIndex(m => m.id === messageId)
+    if (messageIndex !== -1) {
+      const successCount = results.filter(r => r.startsWith('✅')).length
+      const failureCount = results.filter(r => r.startsWith('❌')).length
+      
+      currentHistory[messageIndex].text = `🎯 **MCP Execution Complete**
+
+${results.join('\n\n')}
+
+📊 **Summary**: ${successCount}/${totalSteps} steps completed successfully${failureCount > 0 ? `, ${failureCount} failed` : ''}
+✨ **Execution finished!**`
+    }
+  }
+
   // List available MCP tools
   static async getAvailableTools(sessionId: string): Promise<any[]> {
     try {
@@ -99,25 +331,14 @@ export class MCPService {
     }
   }
 
-  // Process @enteract message and route to appropriate MCP tools
-  static async processEnteractMessage(message: string, _selectedModel: string | null) {
-    console.log('🔧 [MCP] Processing @enteract message:', message)
+  // LLM-powered MCP workflow with tool access
+  static async processEnteractMessageSimpleLLM(message: string, selectedModel: string | null) {
+    const requestId = Date.now() + '-' + Math.random().toString(36).substr(2, 5)
+    console.log(`🤖 [MCP] Request ${requestId}: LLM-powered @enteract workflow`)
     try {
-      // Remove @enteract prefix and trim
+      // Clean the message
       const cleanMessage = message.replace(/^@enteract\s*/i, '').trim()
-      console.log('🔧 [MCP] Clean message:', cleanMessage)
       
-      if (!cleanMessage) {
-        SessionManager.addMessageToCurrentChat({
-          id: messageIdCounter++,
-          sender: 'assistant',
-          text: '🔧 **MCP Mode** - Please provide a command after @enteract\n\nExample: `@enteract take a screenshot`',
-          timestamp: new Date(),
-          messageType: 'text'
-        })
-        return
-      }
-
       // Add user message to chat
       SessionManager.addMessageToCurrentChat({
         id: messageIdCounter++,
@@ -126,124 +347,182 @@ export class MCPService {
         timestamp: new Date(),
         messageType: 'text'
       })
+      
+      if (!cleanMessage) {
+        SessionManager.addMessageToCurrentChat({
+          id: generateUniqueMessageId(),
+          sender: 'assistant',
+          text: '🤖 **MCP Agent** - Please provide a request after @enteract\n\nExample: `@enteract what tools are available?`',
+          timestamp: new Date(),
+          messageType: 'text'
+        })
+        return
+      }
 
       // Ensure MCP session is active
-      console.log('🔧 [MCP] Ensuring MCP session is active...')
       const sessionId = await MCPService.ensureMCPSession()
-      console.log('🔧 [MCP] Session ID:', sessionId)
+      const availableTools = await MCPService.getAvailableTools(sessionId)
       
+      // Handle simple "list tools" request directly
+      if (cleanMessage.toLowerCase().includes('tools') && (cleanMessage.toLowerCase().includes('available') || cleanMessage.toLowerCase().includes('list'))) {
+        const toolList = availableTools.map(tool => 
+          `• **${tool.name}**: ${tool.description}`
+        ).join('\n')
+        
+        SessionManager.addMessageToCurrentChat({
+          id: generateUniqueMessageId(),
+          sender: 'assistant',
+          text: `🤖 **Available MCP Tools**\n\n${toolList}\n\n✨ Use @enteract with any request to let me choose and execute the right tool!`,
+          timestamp: new Date(),
+          messageType: 'text'
+        })
+        return
+      }
+
       // Add thinking message
-      const thinkingMessageId = messageIdCounter++
+      const thinkingMessageId = generateUniqueMessageId()
       SessionManager.addMessageToCurrentChat({
         id: thinkingMessageId,
         sender: 'assistant',
-        text: '🔧 **MCP Agent** - Analyzing request and selecting appropriate tools▋',
+        text: '🤖 **MCP Agent** - Analyzing request...▋',
         timestamp: new Date(),
         messageType: 'text',
         isStreaming: true
       })
 
-      setTimeout(() => {
-        MCPService.scrollChatToBottom()
-      }, 50)
+      setTimeout(() => MCPService.scrollChatToBottom(), 50)
 
-      // Get available tools
-      console.log('🔧 [MCP] Getting available tools...')
-      const availableTools = await MCPService.getAvailableTools(sessionId)
-      console.log('🔧 [MCP] Available tools:', availableTools.map(t => t.name))
+      // Use LLM to intelligently select tools
+      console.log(`🤖 [MCP] Request ${requestId}: Using LLM to select tools for: "${cleanMessage}"`)
+      const toolActions = await MCPService.selectToolWithLLM(cleanMessage, availableTools, selectedModel)
+      console.log(`🤖 [MCP] Request ${requestId}: LLM returned actions:`, toolActions)
       
-      // Simple tool selection logic based on message content
-      const toolActions = MCPService.selectToolsForMessage(cleanMessage, availableTools)
-      console.log('🔧 [MCP] Selected tool actions:', toolActions)
-      
-      if (toolActions.length === 0) {
-        // Update thinking message to show no tools found
+      if (!toolActions || toolActions.length === 0) {
         const currentHistory = SessionManager.getCurrentChatHistory().value
         const messageIndex = currentHistory.findIndex(m => m.id === thinkingMessageId)
         if (messageIndex !== -1) {
-          currentHistory[messageIndex].text = '🔧 **MCP Agent** - No specific tools found for this request. Available tools:\n\n' + 
-            availableTools.map(tool => `• **${tool.name}**: ${tool.description}`).join('\n')
+          currentHistory[messageIndex].text = `🤖 **MCP Agent** - I don't recognize that request. Here's what I can do:\n\n${availableTools.map(tool => `• **${tool.name}**: ${tool.description}`).join('\n')}`
           currentHistory[messageIndex].isStreaming = false
         }
         return
       }
 
-      // Check if any tools require approval
-      const compoundTools = ['click_on_text', 'click_at']
-      const requiresApproval = toolActions.some(action => compoundTools.includes(action.toolName))
-      
-      if (requiresApproval) {
-        // Show approval request
-        const currentHistory = SessionManager.getCurrentChatHistory().value
-        const messageIndex = currentHistory.findIndex(m => m.id === thinkingMessageId)
-        if (messageIndex !== -1) {
-          const toolDescriptions = toolActions.map(action => 
-            `• **${action.toolName}**: ${JSON.stringify(action.parameters)}`
-          ).join('\n')
-          
-          currentHistory[messageIndex].text = `🔧 **MCP Agent - Approval Required**\n\nI want to execute these tools:\n\n${toolDescriptions}\n\n⚠️ **These actions will interact with your computer. Proceed?**\n\n[This would show approval buttons in a real implementation]`
-          currentHistory[messageIndex].isStreaming = false
-        }
-        
-        // For demo purposes, we'll auto-approve after showing the message
-        // In a real implementation, this would wait for user interaction
-        console.log('🔒 [MCP] Approval required for compound tools. Auto-approving for demo...')
-        await new Promise(resolve => setTimeout(resolve, 2000))
-      }
-      // Execute tools sequentially
-      let results: string[] = []
-      for (const action of toolActions) {
-        try {
-          // Update status
-          const currentHistory = SessionManager.getCurrentChatHistory().value
-          const messageIndex = currentHistory.findIndex(m => m.id === thinkingMessageId)
-          if (messageIndex !== -1) {
-            currentHistory[messageIndex].text = `🔧 **MCP Agent** - Executing ${action.toolName}...▋`
-          }
-          
-          setTimeout(() => {
-            MCPService.scrollChatToBottom()
-          }, 10)
-
-          const result = await MCPService.executeTool(sessionId, action.toolName, action.parameters)
-          
-          if (result.success) {
-            results.push(`✅ **${action.toolName}**: ${MCPService.formatToolResult(result)}`)
-          } else {
-            results.push(`❌ **${action.toolName}**: ${result.error || 'Unknown error'}`)
-          }
-        } catch (error) {
-          results.push(`❌ **${action.toolName}**: ${error}`)
-        }
-      }
-
-      // Update final message with results
+      // Execute the first matching tool
+      const action = toolActions[0]
       const currentHistory = SessionManager.getCurrentChatHistory().value
       const messageIndex = currentHistory.findIndex(m => m.id === thinkingMessageId)
+      
       if (messageIndex !== -1) {
-        const finalText = `🔧 **MCP Agent Results**\n\n${results.join('\n\n')}`
-        currentHistory[messageIndex].text = finalText
-        currentHistory[messageIndex].isStreaming = false
+        currentHistory[messageIndex].text = `🤖 **MCP Agent** - Executing ${action.toolName}...▋`
+      }
+
+      try {
+        console.log(`🤖 [MCP] Request ${requestId}: Executing tool ${action.toolName} with parameters:`, action.parameters)
+        const result = await MCPService.executeTool(sessionId, action.toolName, action.parameters)
+        console.log(`🤖 [MCP] Request ${requestId}: Tool execution result:`, result)
+        
+        if (messageIndex !== -1) {
+          if (result.success) {
+            currentHistory[messageIndex].text = `🤖 **MCP Agent** - ✅ Done!\n\n**Tool Used**: ${action.toolName}\n**Result**: ${MCPService.formatToolResult(result)}`
+          } else {
+            currentHistory[messageIndex].text = `🤖 **MCP Agent** - ❌ Error\n\n**Tool**: ${action.toolName}\n**Error**: ${result.error || 'Unknown error'}`
+          }
+          currentHistory[messageIndex].isStreaming = false
+        }
+      } catch (error) {
+        console.error(`❌ [MCP] Request ${requestId}: Tool execution failed:`, error)
+        if (messageIndex !== -1) {
+          currentHistory[messageIndex].text = `🤖 **MCP Agent** - ❌ Error: ${error}`
+          currentHistory[messageIndex].isStreaming = false
+        }
       }
 
     } catch (error) {
-      console.error('Error processing @enteract message:', error)
-      
+      console.error('❌ [MCP] Error in LLM workflow:', error)
       SessionManager.addMessageToCurrentChat({
-        id: messageIdCounter++,
+        id: generateUniqueMessageId(),
         sender: 'assistant',
         text: `❌ **MCP Error**: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
         timestamp: new Date(),
         messageType: 'text'
       })
+    } finally {
+      // Ensure scroll happens
+      setTimeout(() => MCPService.scrollChatToBottom(), 100)
     }
-    
-    setTimeout(() => {
-      MCPService.scrollChatToBottom()
-    }, 50)
   }
 
-  // Enhanced tool selection with compound tools
+  // LLM-based tool selection  
+  private static async selectToolWithLLM(message: string, availableTools: any[], selectedModel: string | null): Promise<{ toolName: string, parameters: any }[]> {
+    try {
+      const requestId = Date.now() + '-' + Math.random().toString(36).substr(2, 9)
+      const toolsDescription = availableTools.map(tool => 
+        `- ${tool.name}: ${tool.description}`
+      ).join('\n')
+
+      const systemPrompt = `ANALYZE: "${message}"
+
+DECISION:
+If greeting/conversation (hi, hello, how are you) → DECLINE
+If computer task → SELECT TOOL
+
+Tools available:
+${toolsDescription}
+
+Examples:
+"hi there" → {"decline": true, "reason": "greeting"}
+"take screenshot" → {"tool_name": "take_screenshot", "parameters": {}}
+"cursor position" → {"tool_name": "get_cursor_position", "parameters": {}}
+"OCR results" → {"tool_name": "debug_ocr", "parameters": {}}
+
+For "${message}":
+JSON only:`
+
+      const llmResponse = await invoke<string>('generate_ollama_response', {
+        model: selectedModel || 'gemma3:1b-it-qat',
+        prompt: systemPrompt
+      })
+
+      console.log('🤖 [MCP] LLM tool selection response:', llmResponse)
+      console.log('🤖 [MCP] LLM response length:', llmResponse.length)
+      console.log('🤖 [MCP] LLM response type:', typeof llmResponse)
+
+      // Try to parse JSON response
+      try {
+        const jsonMatch = llmResponse.match(/\{[\s\S]*\}/)
+        console.log('🤖 [MCP] JSON match found:', jsonMatch ? jsonMatch[0] : 'none')
+        if (jsonMatch) {
+          const toolSelection = JSON.parse(jsonMatch[0])
+          console.log('🤖 [MCP] Parsed tool selection:', toolSelection)
+          
+          // Handle decline case
+          if (toolSelection.decline) {
+            console.log('🤖 [MCP] LLM declined request:', toolSelection.reason)
+            return [] // Return empty to trigger "no tools found" response
+          }
+          
+          if (toolSelection.tool_name) {
+            console.log('🤖 [MCP] LLM selected tool:', toolSelection.tool_name, 'Parameters:', toolSelection.parameters, 'Reasoning:', toolSelection.reasoning)
+            return [{
+              toolName: toolSelection.tool_name,
+              parameters: toolSelection.parameters || {}
+            }]
+          }
+        }
+      } catch (parseError) {
+        console.error('❌ [MCP] Failed to parse LLM tool selection:', parseError)
+        console.error('❌ [MCP] Raw LLM response:', llmResponse)
+      }
+
+      return []
+    } catch (error) {
+      console.error('❌ [MCP] LLM tool selection failed:', error)
+      // Fallback to regex-based selection
+      return MCPService.selectToolsForMessage(message, availableTools)
+    }
+  }
+
+  // Fallback regex-based tool selection
   private static selectToolsForMessage(message: string, availableTools: any[]): { toolName: string, parameters: any }[] {
     const actions: { toolName: string, parameters: any }[] = []
     const lowerMessage = message.toLowerCase()
