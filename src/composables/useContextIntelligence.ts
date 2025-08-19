@@ -108,18 +108,41 @@ class ContextIntelligenceService {
     
     this.isProcessing.value = true
     try {
+      // Validate input messages
+      if (!messages || !Array.isArray(messages) || messages.length === 0) {
+        console.warn('🧠 No valid messages provided for context analysis')
+        return null
+      }
+      
       const analysis = await invoke<ContextAnalysis>('analyze_conversation_context', {
         messages: messages.slice(-10) // Last 10 messages for context
       })
       
+      // Validate the analysis response
+      if (!analysis) {
+        console.warn('🧠 No analysis returned from backend')
+        return null
+      }
+      
       this.contextAnalysis.value = analysis
       
-      // Update document suggestions
-      await this.updateDocumentSuggestions(analysis.suggested_documents)
+      // Update document suggestions with proper error handling
+      if (analysis.suggested_documents && Array.isArray(analysis.suggested_documents)) {
+        await this.updateDocumentSuggestions(analysis.suggested_documents)
+      } else {
+        console.warn('🧠 No valid document suggestions in analysis')
+      }
       
       return analysis
     } catch (error) {
-      console.error('Failed to analyze conversation:', error)
+      console.error('🧠 Failed to analyze conversation:', error)
+      // Set a minimal analysis to prevent undefined errors
+      this.contextAnalysis.value = {
+        topics: [],
+        entities: [],
+        intent: 'unknown',
+        suggested_documents: []
+      }
       return null
     } finally {
       this.isProcessing.value = false
@@ -127,13 +150,17 @@ class ContextIntelligenceService {
   }
   
   async updateDocumentSuggestions(suggestions: ContextSuggestion[]) {
-    if (!this.contextSession.value) return
+    if (!this.contextSession.value || !suggestions || !Array.isArray(suggestions)) {
+      console.warn('🧠 Invalid suggestions or no context session available')
+      return
+    }
     
     const documentIds = suggestions
-      .filter(s => s.confidence >= this.MIN_RELEVANCE_SCORE)
+      .filter(s => s && typeof s.confidence === 'number' && s.confidence >= this.MIN_RELEVANCE_SCORE)
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, this.MAX_CACHED_DOCUMENTS)
       .map(s => s.document_id)
+      .filter(id => id) // Remove any undefined/null IDs
     
     this.contextSession.value.suggested_documents = documentIds
     
@@ -141,7 +168,9 @@ class ContextIntelligenceService {
     this.documentPriorityQueue.value = documentIds
     
     // Trigger background embedding processing
-    await this.processDocumentEmbeddings(documentIds)
+    if (documentIds.length > 0) {
+      await this.processDocumentEmbeddings(documentIds)
+    }
   }
   
   async processDocumentEmbeddings(documentIds: string[]) {
@@ -184,8 +213,15 @@ class ContextIntelligenceService {
   }
   
   private async selectAutoDocuments(): Promise<string[]> {
-    if (!this.contextAnalysis.value) {
-      return []
+    // Add proper null/undefined checks
+    if (!this.contextAnalysis.value || !this.contextAnalysis.value.suggested_documents) {
+      console.warn('🧠 Context analysis not available, using cached documents as fallback')
+      // Fallback to top cached documents by relevance
+      return Array.from(this.contextCache.value.values())
+        .filter(doc => doc.relevance_score >= this.MIN_RELEVANCE_SCORE)
+        .sort((a, b) => (b.relevance_score + b.access_count) - (a.relevance_score + a.access_count))
+        .slice(0, this.MAX_CACHED_DOCUMENTS)
+        .map(doc => doc.id)
     }
     
     const suggestions = this.contextAnalysis.value.suggested_documents

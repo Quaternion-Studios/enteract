@@ -155,24 +155,7 @@ pub async fn update_context_session(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub async fn analyze_conversation_context_enhanced(
-    messages: Vec<ConversationMessage>,
-    state: State<'_, EnhancedRagSystemState>,
-) -> Result<ContextAnalysis, String> {
-    let context_engine = {
-        let rag_state = state.0.lock().map_err(|e| e.to_string())?;
-        match &*rag_state {
-            Some(system) => system.context_engine.clone(),
-            None => return Err("RAG system not initialized".to_string())
-        }
-    };
-    
-    context_engine
-        .analyze_conversation_context(messages)
-        .await
-        .map_err(|e| e.to_string())
-}
+
 
 #[tauri::command]
 pub async fn get_context_suggestions(
@@ -244,46 +227,21 @@ pub async fn get_related_documents(
 
 #[tauri::command]
 pub async fn analyze_conversation_context(
-    messages: Vec<String>,
+    messages: Vec<ConversationMessage>,
     state: State<'_, EnhancedRagSystemState>,
-) -> Result<HashMap<String, Value>, String> {
-    let _rag_state = state.0.lock().map_err(|e| e.to_string())?;
-    
-    let combined_text = messages.join(" ");
-    let mut context = HashMap::new();
-    
-    // Extract topics (simple word frequency)
-    let words: Vec<&str> = combined_text.split_whitespace().collect();
-    let mut word_count = HashMap::new();
-    for word in &words {
-        let lowercase_word = word.to_lowercase();
-        let clean_word = lowercase_word.trim_matches(|c: char| !c.is_alphanumeric());
-        if clean_word.len() > 4 {
-            *word_count.entry(clean_word.to_string()).or_insert(0) += 1;
+) -> Result<ContextAnalysis, String> {
+    let context_engine = {
+        let rag_state = state.0.lock().map_err(|e| e.to_string())?;
+        match &*rag_state {
+            Some(system) => system.context_engine.clone(),
+            None => return Err("RAG system not initialized".to_string())
         }
-    }
-    
-    let mut topics: Vec<_> = word_count.into_iter().collect();
-    topics.sort_by(|a, b| b.1.cmp(&a.1));
-    let top_topics: Vec<String> = topics.into_iter().take(5).map(|(word, _)| word).collect();
-    
-    // Simple intent detection
-    let intent = if combined_text.contains("how") || combined_text.contains("what") {
-        "question"
-    } else if combined_text.contains("implement") || combined_text.contains("create") {
-        "implementation"
-    } else if combined_text.contains("error") || combined_text.contains("problem") {
-        "troubleshooting"
-    } else {
-        "general"
     };
     
-    context.insert("topics".to_string(), serde_json::json!(top_topics));
-    context.insert("intent".to_string(), serde_json::json!(intent));
-    context.insert("message_count".to_string(), serde_json::json!(messages.len()));
-    context.insert("total_words".to_string(), serde_json::json!(words.len()));
-    
-    Ok(context)
+    context_engine
+        .analyze_conversation_context(messages)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
