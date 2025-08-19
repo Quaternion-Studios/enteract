@@ -103,7 +103,7 @@ class ContextIntelligenceService {
       console.log('🧠 Initializing context session:', chatId)
       
       const session = await invoke<ContextSession>('initialize_context_session', {
-        chatId
+        chat_id: chatId
       })
       this.contextSession.value = session
       console.log('🧠 Context session initialized successfully:', session)

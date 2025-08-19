@@ -77,7 +77,7 @@ pub async fn search_context_documents(
     query: String,
     limit: usize,
     state: State<'_, EnhancedRagSystemState>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<crate::rag::services::RankedDocument>, String> {
     let context_engine = {
         let rag_state = state.0.lock().map_err(|e| e.to_string())?;
         match &*rag_state {
@@ -86,10 +86,14 @@ pub async fn search_context_documents(
         }
     };
     
-    context_engine
-        .search_context_documents(&query, limit)
+    let mut results = context_engine
+        .search_all_documents(&query)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    
+    // Truncate to requested limit
+    if results.len() > limit { results.truncate(limit); }
+    Ok(results)
 }
 
 #[tauri::command]
@@ -170,29 +174,18 @@ pub async fn get_context_suggestions(
     conversation_history: Vec<String>,
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<Vec<ContextSuggestion>, String> {
-    let _rag_state = state.0.lock().map_err(|e| e.to_string())?;
-    
-    // Simple mock implementation - extract keywords and suggest relevant docs
-    let combined_text = conversation_history.join(" ");
-    let keywords: Vec<&str> = combined_text.split_whitespace()
-        .filter(|word| word.len() > 4)
-        .take(5)
-        .collect();
-    
-    let mut suggestions = Vec::new();
-    for (i, keyword) in keywords.iter().enumerate() {
-        suggestions.push(ContextSuggestion {
-            document_id: format!("doc_{}", i),
-            document_name: format!("Document about {}", keyword),
-            relevance_score: 0.8 - (i as f32 * 0.1),
-            reason: format!("Contains keyword: {}", keyword),
-            preview: format!("This document discusses {} in detail...", keyword),
-            confidence: 0.8 - (i as f32 * 0.1),
-            relevant_chunks: vec![format!("Relevant content about {}...", keyword)],
-        });
-    }
-    
-    Ok(suggestions)
+    let context_engine = {
+        let rag_state = state.0.lock().map_err(|e| e.to_string())?;
+        match &*rag_state {
+            Some(system) => system.context_engine.clone(),
+            None => return Err("RAG system not initialized".to_string())
+        }
+    };
+
+    context_engine
+        .suggest_context(&conversation_history)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -200,37 +193,18 @@ pub async fn get_related_documents(
     document_ids: Vec<String>,
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<Vec<RelatedDocument>, String> {
-    let rag_state = state.0.lock().map_err(|e| e.to_string())?;
-    
-    match &*rag_state {
-        Some(system) => {
-            let all_documents = system.get_all_documents().map_err(|e| e.to_string())?;
-            let mut related = Vec::new();
-            
-            // Simple similarity based on file type and keywords
-            for target_id in &document_ids {
-                if let Some(target_doc) = all_documents.iter().find(|d| d.id == *target_id) {
-                    for doc in &all_documents {
-                        if doc.id != *target_id && doc.file_type == target_doc.file_type {
-                            related.push(RelatedDocument {
-                                document_id: doc.id.clone(),
-                                document_name: doc.file_name.clone(),
-                                relationship_type: "similar_type".to_string(),
-                                similarity_score: 0.6,
-                            });
-                        }
-                    }
-                }
-            }
-            
-            // Remove duplicates and limit results
-            related.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap());
-            related.dedup_by(|a, b| a.document_id == b.document_id);
-            
-            Ok(related.into_iter().take(10).collect())
+    let context_engine = {
+        let rag_state = state.0.lock().map_err(|e| e.to_string())?;
+        match &*rag_state {
+            Some(system) => system.context_engine.clone(),
+            None => return Err("RAG system not initialized".to_string())
         }
-        None => Err("RAG system not initialized".to_string())
-    }
+    };
+
+    context_engine
+        .get_related_documents(&document_ids)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -256,14 +230,25 @@ pub async fn analyze_conversation_context(
 pub async fn scan_file_changes(
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<Vec<FileChangeEvent>, String> {
-    let _rag_state = state.0.lock().map_err(|e| e.to_string())?;
-    
-    // Mock implementation - in production, this would use the file watcher
-    let events = vec![
-        // No changes for now
-    ];
-    
-    Ok(events)
+    let rag_state = state.0.lock().map_err(|e| e.to_string())?;
+    match &*rag_state {
+        Some(system) => {
+            // Scan current documents for missing files and report deletions
+            let docs = system.get_all_documents().map_err(|e| e.to_string())?;
+            let mut events = Vec::new();
+            for doc in docs {
+                if !doc.file_path.is_empty() && !std::path::Path::new(&doc.file_path).exists() {
+                    events.push(FileChangeEvent {
+                        file_path: doc.file_path.clone(),
+                        event_type: crate::rag::services::FileEventType::Deleted,
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    });
+                }
+            }
+            Ok(events)
+        }
+        None => Err("RAG system not initialized".to_string())
+    }
 }
 
 #[tauri::command]

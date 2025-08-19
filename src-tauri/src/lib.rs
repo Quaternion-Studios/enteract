@@ -327,6 +327,12 @@ pub fn run() {
             scan_file_changes,
             cleanup_orphaned_documents,
             get_document_analytics,
+            get_cached_context_documents,
+            initialize_context_session,
+            update_document_access,
+            process_document_embeddings,
+            get_context_for_message,
+            update_context_session,
             
 
 

@@ -192,6 +192,9 @@ const parseAgentFromMessage = (message: string): string => {
         if (['auto', 'manual', 'search', 'all'].includes(contextCommand)) {
           contextMode.value = contextCommand as typeof contextMode.value
         }
+      } else if (agent.id === 'context' && !contextCommand) {
+        // Default @context to use all documents unless a mode is specified
+        contextMode.value = 'all'
       }
       
       // Remove the mention from the message
@@ -199,6 +202,32 @@ const parseAgentFromMessage = (message: string): string => {
     }
   }
   return message
+}
+
+// Parse inline "/\"filename\"" references and map to document IDs; preserve tokens
+const parseSlashReferences = (message: string): { cleaned: string; docIds: string[] } => {
+  const resolvedDocIds: string[] = []
+  if (!ragDocuments.documents.value || ragDocuments.documents.value.length === 0) {
+    return { cleaned: message, docIds: resolvedDocIds }
+  }
+
+  const docs = ragDocuments.documents.value
+
+  // Resolve only quoted references: /"filename.ext"
+  message = message.replace(/\/("[^"]+")/g, (match, quoted) => {
+    const filename = quoted.slice(1, -1) // remove quotes
+    const found = docs.find(d => d.file_name.toLowerCase() === filename.toLowerCase())
+    if (found) {
+      resolvedDocIds.push(found.id)
+      // Keep the token as /"filename" to indicate inclusion
+      return `/${quoted}`
+    }
+    // No match: leave token unchanged
+    return match
+  })
+
+  // Do not auto-resolve unquoted tokens; leave as-is so the dropdown can assist
+  return { cleaned: message.trim(), docIds: Array.from(new Set(resolvedDocIds)) }
 }
 
 // Enhanced keyboard handler
@@ -302,27 +331,48 @@ const sendMessageWithAgent = async () => {
   if (!chatMessage.value.trim()) return
   
   let originalMessage = chatMessage.value.trim()
-  const cleanedMessage = parseAgentFromMessage(originalMessage)
+  let cleanedMessage = parseAgentFromMessage(originalMessage)
+  // Extract inline "/doc" references
+  const { cleaned, docIds: slashDocIds } = parseSlashReferences(cleanedMessage)
+  cleanedMessage = cleaned
   
   // Prepare document context based on agent type
   let selectedDocIds = Array.from(ragDocuments.selectedDocumentIds.value)
+  // Include any "/doc" inline references for this message and reflect in UI selection
+  if (slashDocIds.length > 0) {
+    selectedDocIds = [...new Set([...selectedDocIds, ...slashDocIds])]
+    for (const docId of slashDocIds) {
+      if (!ragDocuments.selectedDocumentIds.value.has(docId)) {
+        ragDocuments.toggleDocumentSelection(docId, 'chat')
+      }
+    }
+  }
   
   // Handle @context agent with intelligent document selection
   if (currentAgent.value === 'context') {
     // Add query to context flow
     addContextFlow('query', cleanedMessage || originalMessage)
     
-    // Analyze conversation for context relevance
-    await contextIntelligence.analyzeConversation(chatHistory.value.map(msg => ({
+    // Analyze conversation for context relevance (include current message if history is empty)
+    const analysisMessages = chatHistory.value.map(msg => ({
       role: msg.sender === 'You' ? 'user' : 'assistant',
       content: msg.text
-    })))
+    }))
+    if (analysisMessages.length === 0 && (cleanedMessage || originalMessage)) {
+      analysisMessages.push({ role: 'user', content: cleanedMessage || originalMessage })
+    }
+    await contextIntelligence.analyzeConversation(analysisMessages)
     
     // Select documents based on context mode
     const contextDocs = await contextIntelligence.selectDocuments(contextMode.value, cleanedMessage)
     
     // Merge with manually selected documents
     selectedDocIds = [...new Set([...selectedDocIds, ...contextDocs])]
+
+    // If context mode is 'all', override with ALL loaded documents to make access ironclad
+    if (contextMode.value === 'all') {
+      selectedDocIds = ragDocuments.documents.value.map(d => d.id)
+    }
     
     // Add documents to active context
     for (const docId of contextDocs) {
@@ -347,7 +397,7 @@ const sendMessageWithAgent = async () => {
   showDocumentDropdown.value = false
   
   // Reset to default agent unless the message explicitly mentioned an agent
-  const hasExplicitAgentMention = originalMessage.toLowerCase().match(/@(enteract|coding|research|vision)\b/)
+  const hasExplicitAgentMention = originalMessage.toLowerCase().match(/@(enteract|coding|research|vision|context)\b/)
   if (!hasExplicitAgentMention) {
     currentAgent.value = 'enteract'
   }
@@ -586,7 +636,14 @@ const handleInsertReference = (fileName: string) => {
     const beforeMention = chatMessage.value.substring(0, mentionStartPos.value)
     const afterCursor = chatMessage.value.substring(input.selectionStart || 0)
     
-    chatMessage.value = beforeMention + '/' + fileName + ' ' + afterCursor
+    // Insert a quoted reference token to make inclusion explicit
+    chatMessage.value = `${beforeMention}/"${fileName}" ${afterCursor}`
+    
+    // Also reflect selection in RAG tabs for consistency
+    const doc = ragDocuments.documents.value.find(d => d.file_name === fileName)
+    if (doc && !ragDocuments.selectedDocumentIds.value.has(doc.id)) {
+      ragDocuments.toggleDocumentSelection(doc.id, 'chat')
+    }
     showDocumentDropdown.value = false
     
     // Focus input

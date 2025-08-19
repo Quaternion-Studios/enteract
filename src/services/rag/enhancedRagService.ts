@@ -456,16 +456,7 @@ class EnhancedRagService {
     }
   }
 
-  // Migration utility to upgrade from legacy RAG system
-  async migrateFromLegacy(): Promise<void> {
-    try {
-      console.log('Migration from legacy RAG system not yet implemented')
-      // TODO: Implement migration logic if needed
-    } catch (error) {
-      console.error('Failed to migrate from legacy RAG system:', error)
-      throw error
-    }
-  }
+  
 
   // Performance monitoring
   async getPerformanceMetrics(): Promise<any> {

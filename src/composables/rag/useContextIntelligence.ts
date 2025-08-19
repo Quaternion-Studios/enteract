@@ -99,7 +99,8 @@ export function useContextIntelligence() {
 
     try {
       const results = await invoke<RankedDocument[]>('search_context_documents', {
-        query: query.trim()
+        query: query.trim(),
+        limit: 50
       })
       
       searchResults.value = results
@@ -122,7 +123,7 @@ export function useContextIntelligence() {
 
     try {
       const suggestions = await invoke<ContextSuggestion[]>('get_context_suggestions', {
-        conversationHistory
+        conversation_history: conversationHistory
       })
       
       contextSuggestions.value = suggestions
@@ -143,7 +144,7 @@ export function useContextIntelligence() {
 
     try {
       const related = await invoke<RelatedDocument[]>('get_related_documents', {
-        documentIds
+        document_ids: documentIds
       })
       
       relatedDocuments.value = related
@@ -163,8 +164,9 @@ export function useContextIntelligence() {
     }
 
     try {
+      const formatted = messages.map(m => ({ role: 'user', content: m }))
       const context = await invoke<Record<string, any>>('analyze_conversation_context', {
-        messages
+        messages: formatted
       })
       
       conversationContext.value = {
