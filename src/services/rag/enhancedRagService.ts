@@ -102,6 +102,7 @@ export interface FileValidation {
 
 class EnhancedRagService {
   private initialized = false
+  private documentCache = new Map<string, EnhancedDocument>()
 
   async initialize(): Promise<void> {
     try {
@@ -145,6 +146,13 @@ class EnhancedRagService {
       }
 
       const documents = await invoke<EnhancedDocument[]>('get_all_documents')
+      
+      // Cache documents for metadata enrichment
+      this.documentCache.clear()
+      documents.forEach(doc => {
+        this.documentCache.set(doc.id, doc)
+      })
+      
       return documents
     } catch (error) {
       console.error('Failed to get enhanced documents:', error)
@@ -179,6 +187,24 @@ class EnhancedRagService {
         query,
         contextDocumentIds: contextDocumentIds
       })
+      
+      // Enrich chunks with document metadata for better context
+      if (chunks.length > 0 && this.documentCache.size > 0) {
+        const enrichedChunks = chunks.map(chunk => {
+          const doc = this.documentCache.get(chunk.document_id)
+          if (doc) {
+            // Add document filename to metadata for context formatting
+            chunk.metadata = JSON.stringify({
+              ...JSON.parse(chunk.metadata || '{}'),
+              document_name: doc.file_name,
+              document_type: doc.file_type
+            })
+          }
+          return chunk
+        })
+        return enrichedChunks
+      }
+      
       return chunks
     } catch (error) {
       console.error('Failed to search enhanced documents:', error)
@@ -407,21 +433,43 @@ class EnhancedRagService {
       return acc
     }, {} as Record<string, EnhancedDocumentChunk[]>)
     
-    let context = 'Relevant document context:\n\n'
+    // Build comprehensive context with document metadata
+    const contextParts: string[] = []
+    const totalChunks = chunks.length
+    const numDocs = Object.keys(documentChunks).length
+    
+    contextParts.push(`[Document Context: ${totalChunks} relevant sections from ${numDocs} document${numDocs > 1 ? 's' : ''}]\n`)
     
     for (const [docId, docChunks] of Object.entries(documentChunks)) {
       // Sort chunks by similarity score for better context ordering
-      docChunks.sort((a, b) => (b.similarity_score || 0) - (a.similarity_score || 0))
-      
-      context += `From document ${docId}:\n`
-      docChunks.forEach((chunk, index) => {
-        const score = chunk.similarity_score ? ` (similarity: ${chunk.similarity_score.toFixed(3)})` : ''
-        context += `${index + 1}. ${chunk.content.trim()}${score}\n`
+      docChunks.sort((a, b) => {
+        // First by score if available
+        if (a.similarity_score && b.similarity_score) {
+          return b.similarity_score - a.similarity_score
+        }
+        // Then by chunk index to maintain document order
+        return a.chunk_index - b.chunk_index
       })
-      context += '\n'
+      
+      // Get document name if available (will be improved when we have doc metadata)
+      const docName = `Document ${docId.substring(0, 8)}...`
+      contextParts.push(`\n=== ${docName} (${docChunks.length} sections) ===\n`)
+      
+      // Add chunks with better formatting
+      docChunks.forEach((chunk, index) => {
+        // Include chunk position info for context continuity
+        const position = chunk.chunk_index ? `[Section ${chunk.chunk_index}]` : `[Section ${index + 1}]`
+        const relevance = chunk.similarity_score ? ` (relevance: ${(chunk.similarity_score * 100).toFixed(1)}%)` : ''
+        
+        contextParts.push(`${position}${relevance}:\n`)
+        contextParts.push(chunk.content.trim())
+        contextParts.push('\n')
+      })
     }
     
-    return context
+    contextParts.push('\n[End of Document Context]\n')
+    
+    return contextParts.join('')
   }
 
   // Get default settings

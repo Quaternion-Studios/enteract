@@ -657,21 +657,33 @@ impl EnhancedRagSystem {
             None
         };
         
+        // Determine chunk limit based on number of selected documents
+        // More documents = more chunks per document to ensure comprehensive context
+        let chunks_per_doc = match context_document_ids.len() {
+            0 => 20,  // No specific docs, return top 20 overall
+            1 => 30,  // Single doc, get more comprehensive context
+            2 => 20,  // Two docs, 20 chunks each = 40 total
+            3 => 15,  // Three docs, 15 chunks each = 45 total
+            4 => 12,  // Four docs, 12 chunks each = 48 total
+            _ => 10,  // Five+ docs, 10 chunks each = 50+ total
+        };
+        let total_limit = if context_document_ids.is_empty() { 20 } else { chunks_per_doc * context_document_ids.len().min(10) };
+        
         // Perform search
         let search_results = if let Some(embedding) = query_embedding {
-            eprintln!("🔍 Using hybrid search (BM25 + vector)");
+            eprintln!("🔍 Using hybrid search (BM25 + vector) with limit {}", total_limit);
             // Use hybrid search (BM25 + vector)
-            self.search_service.hybrid_search(query, &embedding, 20)?
+            self.search_service.hybrid_search(query, &embedding, total_limit)?
         } else {
-            eprintln!("🔍 Using BM25 search only");
+            eprintln!("🔍 Using BM25 search only with limit {}", total_limit);
             // Fall back to BM25 only
-            self.search_service.search_bm25(query, 20)?
+            self.search_service.search_bm25(query, total_limit)?
         };
         
         eprintln!("🔍 Search returned {} initial results", search_results.len());
         
         // Filter by context documents if specified, but also log for debugging
-        let filtered_results = if context_document_ids.is_empty() {
+        let mut filtered_results = if context_document_ids.is_empty() {
             eprintln!("🔍 No context filter applied, returning {} results", search_results.len());
             search_results
         } else {
@@ -691,14 +703,23 @@ impl EnhancedRagSystem {
             
             eprintln!("🔍 After filtering: {} results remaining", filtered.len());
             
-            // If no results after filtering, return original results as fallback
-            if filtered.is_empty() && !search_results.is_empty() {
-                eprintln!("🔍 No filtered results found, returning unfiltered results as fallback");
-                search_results
-            } else {
-                filtered
-            }
+            filtered
         };
+        
+        // If filtering yielded 0 but context documents exist, re-run BM25 scoped to selected docs only
+        if !context_document_ids.is_empty() && filtered_results.is_empty() {
+            eprintln!("🔍 No filtered results found, re-running BM25 scoped to selected documents");
+            let mut scoped: Vec<SearchResult> = Vec::new();
+            for doc_id in &context_document_ids {
+                if let Ok(mut per_doc) = self.search_in_document(doc_id, query, chunks_per_doc).await {
+                    scoped.append(&mut per_doc);
+                }
+            }
+            // Sort and cap to total limit
+            scoped.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            scoped.truncate(total_limit);
+            filtered_results = scoped;
+        }
         
         // Convert search results to enhanced document chunks
         eprintln!("🔍 Converting {} filtered results to enhanced chunks", filtered_results.len());
@@ -711,6 +732,7 @@ impl EnhancedRagSystem {
     fn convert_search_results_to_chunks(&self, search_results: Vec<SearchResult>) -> Result<Vec<EnhancedDocumentChunk>> {
         let conn = Connection::open(&self.db_path)?;
         let mut chunks = Vec::new();
+        let mut docs_needing_reindex: std::collections::HashSet<String> = std::collections::HashSet::new();
         
         eprintln!("🔍 Converting {} search results to chunks", search_results.len());
         
@@ -762,12 +784,69 @@ impl EnhancedRagSystem {
                     };
                     eprintln!("🔄 Created fallback chunk for {}", result.chunk_id);
                     chunks.push(fallback_chunk);
+                    // Mark document for background reindex to self-heal stale index entries
+                    docs_needing_reindex.insert(result.document_id.clone());
                 }
             }
         }
         
         eprintln!("🔍 Final conversion result: {} chunks created", chunks.len());
+        // Fire-and-forget background reindex for any docs that had stale chunk ids
+        if !docs_needing_reindex.is_empty() {
+            let system_clone = self.clone();
+            let doc_ids: Vec<String> = docs_needing_reindex.into_iter().collect();
+            tokio::spawn(async move {
+                for doc_id in doc_ids {
+                    if let Err(e) = system_clone.reindex_document_in_index(&doc_id).await {
+                        eprintln!("❌ Failed to reindex document {}: {}", doc_id, e);
+                    } else {
+                        eprintln!("✅ Reindexed document {} to heal stale index", doc_id);
+                    }
+                }
+            });
+        }
         Ok(chunks)
+    }
+
+    async fn reindex_document_in_index(&self, document_id: &str) -> Result<()> {
+        // Delete existing index entries for this document, then reindex from DB chunks/embeddings
+        self.search_service.delete_document(document_id)?;
+        self.search_service.commit()?;
+
+        // Fetch chunks and, if present, embeddings from DB
+        let chunks = self.get_document_chunks(document_id)?;
+        if chunks.is_empty() { return Ok(()); }
+
+        // Attempt to load embeddings from DB (if they were stored as bytes)
+        // Fallback: re-embed per chunk text if needed
+        let mut embeddings: Vec<Vec<f32>> = Vec::new();
+        let conn = Connection::open(&self.db_path)?;
+        for chunk in &chunks {
+            // Try to read embedding from DB row (if present)
+            let mut stmt = conn.prepare(
+                "SELECT embedding FROM enhanced_document_chunks WHERE id = ?1"
+            )?;
+            let emb: Option<Vec<u8>> = stmt.query_row([&chunk.id], |row| row.get(0)).ok();
+            if let Some(bytes) = emb {
+                // Embedding was stored as bytes (32-bit floats)
+                let floats: Vec<f32> = bytes
+                    .chunks_exact(4)
+                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    .collect();
+                if !floats.is_empty() { embeddings.push(floats); continue; }
+            }
+            // If no embedding found, fall back to generating a query-style embedding
+            if self.embedding_service.is_initialized() {
+                if let Ok(vec) = self.embedding_service.embed_query(&chunk.content) {
+                    embeddings.push(vec);
+                }
+            }
+        }
+
+        if embeddings.len() == chunks.len() {
+            self.index_chunks_for_search(document_id, &chunks, &embeddings).await?;
+        }
+        Ok(())
     }
     
     fn update_document_access(&self, document_ids: &[String]) -> Result<()> {
@@ -1128,13 +1207,56 @@ impl EnhancedRagSystem {
         query: &str,
         max_chunks: usize,
     ) -> Result<Vec<SearchResult>> {
-        // Use search service to find chunks in specific document
-        let results = self.search_service.search_bm25(
-            &format!("{} document_id:{}", query, document_id), 
-            max_chunks
-        )?;
+        // Get all chunks for this document and perform in-memory BM25 scoring
+        let chunks = self.get_document_chunks(document_id)?;
+        if chunks.is_empty() {
+            return Ok(Vec::new());
+        }
         
-        Ok(results)
+        // Simple BM25 scoring for relevance
+        let query_terms: Vec<String> = query.to_lowercase()
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
+        
+        let mut scored_chunks: Vec<SearchResult> = chunks.into_iter()
+            .map(|chunk| {
+                let content_lower = chunk.content.to_lowercase();
+                let mut score = 0.0f32;
+                
+                // Calculate term frequency score
+                for term in &query_terms {
+                    let term_count = content_lower.matches(term).count() as f32;
+                    if term_count > 0.0 {
+                        // BM25-like scoring: diminishing returns for multiple occurrences
+                        score += (term_count / (term_count + 1.0)) * (1.0 / query_terms.len() as f32);
+                    }
+                }
+                
+                // Boost for exact phrase match
+                if content_lower.contains(&query.to_lowercase()) {
+                    score *= 2.0;
+                }
+                
+                SearchResult {
+                    chunk_id: chunk.id.clone(),
+                    document_id: chunk.document_id.clone(),
+                    content: chunk.content.clone(),
+                    score,
+                    bm25_score: score,
+                    vector_score: 0.0,
+                    metadata: chunk.metadata.clone(),
+                    title: None,
+                }
+            })
+            .filter(|result| result.score > 0.0) // Only include chunks with matches
+            .collect();
+        
+        // Sort by score and limit
+        scored_chunks.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored_chunks.truncate(max_chunks);
+        
+        Ok(scored_chunks)
     }
     
     pub async fn get_document(&self, document_id: &str) -> Result<EnhancedDocument> {

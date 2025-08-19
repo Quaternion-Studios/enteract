@@ -355,7 +355,7 @@ const sendMessageWithAgent = async () => {
     
     // Analyze conversation for context relevance (include current message if history is empty)
     const analysisMessages = chatHistory.value.map(msg => ({
-      role: msg.sender === 'You' ? 'user' : 'assistant',
+      role: msg.sender === 'user' ? 'user' : 'assistant',
       content: msg.text
     }))
     if (analysisMessages.length === 0 && (cleanedMessage || originalMessage)) {
