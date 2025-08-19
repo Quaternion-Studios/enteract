@@ -5,8 +5,7 @@ import { SessionManager } from './sessionManager'
 import { ContextManager } from './contextManager'
 import { enhancedRagService } from '../services/rag'
 import { MCPService } from './mcpService'
-
-let messageIdCounter = 1
+import { getNextMessageId } from './messageIdGenerator'
 
 export class AgentService {
   private static scrollChatToBottom: () => void
@@ -30,7 +29,7 @@ export class AgentService {
     
     // Add deep research message to current chat
     SessionManager.addMessageToCurrentChat({
-      id: messageIdCounter++,
+      id: getNextMessageId(),
       sender: 'user',
       text: '🧠 Deep Research Mode activated - I will thoroughly research your next question.',
       timestamp: new Date(),
@@ -54,7 +53,7 @@ export class AgentService {
     
     // Add conversational agent message to current chat
     SessionManager.addMessageToCurrentChat({
-      id: messageIdCounter++,
+      id: getNextMessageId(),
       sender: 'user',
       text: '🤖 Conversational AI Agent activated - Ready for natural conversation.',
       timestamp: new Date(),
@@ -78,7 +77,7 @@ export class AgentService {
     
     // Add coding agent message to current chat
     SessionManager.addMessageToCurrentChat({
-      id: messageIdCounter++,
+      id: getNextMessageId(),
       sender: 'user',
       text: '💻 Coding Agent activated - Ready to help with programming tasks.',
       timestamp: new Date(),
@@ -102,7 +101,7 @@ export class AgentService {
     
     // Add computer use agent message to current chat
     SessionManager.addMessageToCurrentChat({
-      id: messageIdCounter++,
+      id: getNextMessageId(),
       sender: 'user',
       text: '🖥️ Computer Use Agent activated - Ready to assist with computer tasks.',
       timestamp: new Date(),
@@ -143,7 +142,7 @@ export class AgentService {
     
     // Add user message to current chat
     SessionManager.addMessageToCurrentChat({
-      id: messageIdCounter++,
+      id: getNextMessageId(),
       sender: 'user',
       text: userMessage,
       timestamp: new Date(),
@@ -155,7 +154,7 @@ export class AgentService {
       const sessionId = `chat-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
       
       // Store the session ID mapped to the streaming message
-      const streamingMessageId = messageIdCounter
+      const streamingMessageId = getNextMessageId()
       
       // Get appropriate model and agent name based on agent type
       let modelToUse = selectedModel || 'gemma3:1b-it-qat'
@@ -193,7 +192,6 @@ export class AgentService {
         isStreaming: true,
         sessionId: sessionId
       })
-      messageIdCounter++
       
       // Store the mapping
       AgentService.activeSessionIds.set(streamingMessageId, sessionId)
@@ -482,7 +480,7 @@ export class AgentService {
       
       // Add error message to current chat
       SessionManager.addMessageToCurrentChat({
-        id: messageIdCounter++,
+        id: getNextMessageId(),
         sender: 'assistant',
         text: errorMessage,
         timestamp: new Date(),

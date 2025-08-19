@@ -105,7 +105,7 @@ class EnhancedRagService {
 
   async initialize(): Promise<void> {
     try {
-      await invoke('initialize_enhanced_rag_system')
+      await invoke('initialize_rag_system')
       this.initialized = true
       console.log('Enhanced RAG system initialized')
     } catch (error) {
@@ -124,7 +124,7 @@ class EnhancedRagService {
       const arrayBuffer = await file.arrayBuffer()
       const uint8Array = new Uint8Array(arrayBuffer)
       
-      const document = await invoke<EnhancedDocument>('upload_enhanced_document', {
+      const document = await invoke<EnhancedDocument>('upload_document', {
         fileName: file.name,
         fileContent: Array.from(uint8Array),
         fileType: file.type
@@ -144,7 +144,7 @@ class EnhancedRagService {
         await this.initialize()
       }
 
-      const documents = await invoke<EnhancedDocument[]>('get_all_enhanced_documents')
+      const documents = await invoke<EnhancedDocument[]>('get_all_documents')
       return documents
     } catch (error) {
       console.error('Failed to get enhanced documents:', error)
@@ -158,7 +158,7 @@ class EnhancedRagService {
         await this.initialize()
       }
 
-      await invoke('delete_enhanced_document', { documentId })
+      await invoke('delete_document', { documentId: documentId })
       console.log(`Enhanced document ${documentId} deleted`)
     } catch (error) {
       console.error('Failed to delete enhanced document:', error)
@@ -175,9 +175,9 @@ class EnhancedRagService {
         await this.initialize()
       }
 
-      const chunks = await invoke<EnhancedDocumentChunk[]>('search_enhanced_documents', {
+      const chunks = await invoke<EnhancedDocumentChunk[]>('search_documents', {
         query,
-        contextDocumentIds
+        contextDocumentIds: contextDocumentIds
       })
       return chunks
     } catch (error) {
@@ -192,7 +192,7 @@ class EnhancedRagService {
         await this.initialize()
       }
 
-      await invoke('update_enhanced_rag_settings', { settings })
+      await invoke('update_rag_settings', { settings })
       console.log('Enhanced RAG settings updated')
     } catch (error) {
       console.error('Failed to update enhanced settings:', error)
@@ -206,7 +206,7 @@ class EnhancedRagService {
         await this.initialize()
       }
 
-      const settings = await invoke<EnhancedRagSettings>('get_enhanced_rag_settings')
+      const settings = await invoke<EnhancedRagSettings>('get_rag_settings')
       return settings
     } catch (error) {
       console.error('Failed to get enhanced settings:', error)
@@ -220,7 +220,7 @@ class EnhancedRagService {
         await this.initialize()
       }
 
-      const stats = await invoke<EnhancedStorageStats>('get_enhanced_storage_stats')
+      const stats = await invoke<EnhancedStorageStats>('get_storage_stats')
       return stats
     } catch (error) {
       console.error('Failed to get enhanced storage stats:', error)
@@ -234,7 +234,7 @@ class EnhancedRagService {
         await this.initialize()
       }
 
-      await invoke('generate_enhanced_embeddings', { documentId })
+      await invoke('generate_embeddings', { documentId: documentId })
       console.log(`Enhanced embeddings generated for document ${documentId}`)
     } catch (error) {
       console.error('Failed to generate enhanced embeddings:', error)
@@ -248,7 +248,7 @@ class EnhancedRagService {
         await this.initialize()
       }
 
-      await invoke('clear_enhanced_embedding_cache')
+      await invoke('clear_embedding_cache')
       console.log('Enhanced embedding cache cleared')
     } catch (error) {
       console.error('Failed to clear enhanced embedding cache:', error)
@@ -276,7 +276,7 @@ class EnhancedRagService {
         await this.initialize()
       }
 
-      const validation = await invoke<FileValidation>('validate_enhanced_file_upload', {
+      const validation = await invoke<FileValidation>('validate_rag_file_upload', {
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type
@@ -319,7 +319,7 @@ class EnhancedRagService {
       }
 
       const statusMap = await invoke<Record<string, string>>('get_document_embedding_status', {
-        documentIds
+        documentIds: documentIds
       })
       return statusMap
     } catch (error) {
@@ -335,7 +335,7 @@ class EnhancedRagService {
       }
 
       const readinessMap = await invoke<Record<string, string>>('ensure_documents_ready_for_search', {
-        documentIds
+        documentIds: documentIds
       })
       return readinessMap
     } catch (error) {
@@ -350,7 +350,7 @@ class EnhancedRagService {
         await this.initialize()
       }
 
-      await invoke('generate_embeddings_for_selection', { documentIds })
+      await invoke('generate_embeddings_for_selection', { documentIds: documentIds })
       console.log(`Priority embeddings triggered for ${documentIds.length} documents`)
     } catch (error) {
       console.error('Failed to generate embeddings for selection:', error)

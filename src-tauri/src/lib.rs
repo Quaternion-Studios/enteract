@@ -57,21 +57,34 @@ use audio_loopback::{
 };
 use system_info::get_system_info;
 
-// Import RAG commands
-use rag::legacy::commands::{
-    RagSystemState, initialize_rag_system, upload_document, get_all_documents,
-    delete_document, search_documents, update_rag_settings, get_rag_settings,
-    get_storage_stats, generate_embeddings, clear_embedding_cache
-};
-
-// Import Enhanced RAG commands
-use rag::enhanced::commands::{
-    EnhancedRagSystemState, initialize_enhanced_rag_system, upload_enhanced_document,
-    get_all_enhanced_documents, delete_enhanced_document, search_enhanced_documents,
-    generate_enhanced_embeddings, clear_enhanced_embedding_cache, update_enhanced_rag_settings,
-    get_enhanced_rag_settings, get_enhanced_storage_stats, get_embedding_status,
-    validate_enhanced_file_upload, check_document_duplicate, get_document_embedding_status,
-    ensure_documents_ready_for_search, generate_embeddings_for_selection
+// Import RAG commands (Enhanced system is now the primary system)
+use rag::{
+    EnhancedRagSystemState as RagSystemState,
+    initialize_rag_system,
+    upload_document,
+    get_all_documents,
+    delete_document,
+    search_documents,
+    generate_embeddings,
+    clear_embedding_cache,
+    update_rag_settings,
+    get_rag_settings,
+    get_storage_stats,
+    get_embedding_status,
+    validate_rag_file_upload,
+    check_document_duplicate,
+    get_document_embedding_status,
+    ensure_documents_ready_for_search,
+    generate_embeddings_for_selection,
+    
+    // Context commands
+    search_context_documents,
+    get_context_suggestions,
+    get_related_documents,
+    analyze_conversation_context,
+    scan_file_changes,
+    cleanup_orphaned_documents,
+    get_document_analytics
 };
 
 // Import MCP commands
@@ -110,7 +123,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(RagSystemState(std::sync::Arc::new(std::sync::Mutex::new(None))))
-        .manage(EnhancedRagSystemState(std::sync::Arc::new(std::sync::Mutex::new(None))))
         .setup(|app| {
             // Setup emergency global hotkey for transparency restore
             #[cfg(desktop)]
@@ -125,24 +137,7 @@ pub fn run() {
             
             // Audio loopback functionality is initialized on-demand
             
-            // Enhanced RAG system will be initialized on-demand from frontend
-            
-            // Keep legacy RAG system for compatibility
-            let app_handle_legacy = app.handle().clone();
-            let rag_state = app.state::<RagSystemState>().inner().clone();
-            tauri::async_runtime::spawn(async move {
-                if let Ok(mut state_guard) = rag_state.0.lock() {
-                    match crate::rag::legacy::system::RagSystem::new(&app_handle_legacy) {
-                        Ok(system) => {
-                            *state_guard = Some(system);
-                            println!("Legacy RAG system initialized successfully");
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to initialize legacy RAG system: {}", e);
-                        }
-                    }
-                }
-            });
+            // RAG system will be initialized on-demand from frontend
 
             // Initialize MCP session manager
             let mcp_sessions = create_mcp_session_manager();
@@ -300,7 +295,7 @@ pub fn run() {
             save_conversation_insight,
             get_conversation_insights,
             
-            // RAG system commands (legacy)
+            // RAG system commands
             initialize_rag_system,
             upload_document,
             get_all_documents,
@@ -311,24 +306,21 @@ pub fn run() {
             get_storage_stats,
             generate_embeddings,
             clear_embedding_cache,
-            
-            // Enhanced RAG system commands
-            initialize_enhanced_rag_system,
-            upload_enhanced_document,
-            get_all_enhanced_documents,
-            delete_enhanced_document,
-            search_enhanced_documents,
-            generate_enhanced_embeddings,
-            clear_enhanced_embedding_cache,
-            update_enhanced_rag_settings,
-            get_enhanced_rag_settings,
-            get_enhanced_storage_stats,
             get_embedding_status,
-            validate_enhanced_file_upload,
+            validate_rag_file_upload,
             check_document_duplicate,
             get_document_embedding_status,
             ensure_documents_ready_for_search,
             generate_embeddings_for_selection,
+            
+            // Context intelligence commands
+            search_context_documents,
+            get_context_suggestions,
+            get_related_documents,
+            analyze_conversation_context,
+            scan_file_changes,
+            cleanup_orphaned_documents,
+            get_document_analytics,
 
             // MCP commands
             start_mcp_session,

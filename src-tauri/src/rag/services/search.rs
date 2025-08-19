@@ -36,6 +36,7 @@ pub struct SearchResult {
     pub bm25_score: f32,
     pub vector_score: f32,
     pub metadata: Option<String>,
+    pub title: Option<String>,
 }
 
 #[derive(Clone)]
@@ -200,6 +201,7 @@ impl SearchService {
                 bm25_score: score,
                 vector_score: 0.0,
                 metadata,
+                title: None,
             });
         }
         

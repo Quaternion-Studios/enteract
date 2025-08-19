@@ -62,6 +62,7 @@ thiserror = { version = "1.0", optional = true }
 log = "0.4.21"
 env_logger = { version = "0.10", optional = true }
 regex = "1.10.3"
+md5 = "0.7"
 
 # Platform-specific dependencies for transparency
 [target.'cfg(windows)'.dependencies]

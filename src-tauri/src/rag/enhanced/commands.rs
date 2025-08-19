@@ -4,12 +4,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::State;
 
-// Global enhanced RAG system instance
+// Global RAG system instance
 #[derive(Clone)]
 pub struct EnhancedRagSystemState(pub Arc<Mutex<Option<EnhancedRagSystem>>>);
 
 #[tauri::command]
-pub async fn initialize_enhanced_rag_system(
+pub async fn initialize_rag_system(
     app_handle: tauri::AppHandle,
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<String, String> {
@@ -17,7 +17,7 @@ pub async fn initialize_enhanced_rag_system(
     {
         let rag_state = state.0.lock().map_err(|e| e.to_string())?;
         if rag_state.is_some() {
-            return Ok("Enhanced RAG system already initialized".to_string());
+            return Ok("RAG system already initialized".to_string());
         }
     }
     
@@ -26,34 +26,34 @@ pub async fn initialize_enhanced_rag_system(
         Ok(system) => {
             let mut rag_state = state.0.lock().map_err(|e| e.to_string())?;
             *rag_state = Some(system);
-            Ok("Enhanced RAG system initialized successfully".to_string())
+            Ok("RAG system initialized successfully".to_string())
         }
-        Err(e) => Err(format!("Failed to initialize enhanced RAG system: {}", e))
+        Err(e) => Err(format!("Failed to initialize RAG system: {}", e))
     }
 }
 
 #[tauri::command]
-pub async fn upload_enhanced_document(
-    file_name: String,
-    file_content: Vec<u8>,
-    file_type: String,
+pub async fn upload_document(
+    fileName: String,
+    fileContent: Vec<u8>,
+    fileType: String,
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<EnhancedDocument, String> {
     let system = {
         let rag_state = state.0.lock().map_err(|e| e.to_string())?;
         match &*rag_state {
             Some(sys) => Ok(sys.clone()),
-            None => Err("Enhanced RAG system not initialized".to_string())
+            None => Err("RAG system not initialized".to_string())
         }
     }?;
     
-    system.upload_document(file_name, file_content, file_type)
+    system.upload_document(fileName, fileContent, fileType)
         .await
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn get_all_enhanced_documents(
+pub async fn get_all_documents(
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<Vec<EnhancedDocument>, String> {
     let rag_state = state.0.lock().map_err(|e| e.to_string())?;
@@ -63,76 +63,76 @@ pub async fn get_all_enhanced_documents(
             system.get_all_documents()
                 .map_err(|e| e.to_string())
         }
-        None => Err("Enhanced RAG system not initialized".to_string())
+        None => Err(" RAG system not initialized".to_string())
     }
 }
 
 #[tauri::command]
-pub async fn delete_enhanced_document(
-    document_id: String,
+pub async fn delete_document(
+    documentId: String,
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<String, String> {
     let system = {
         let rag_state = state.0.lock().map_err(|e| e.to_string())?;
         match &*rag_state {
             Some(sys) => Ok(sys.clone()),
-            None => Err("Enhanced RAG system not initialized".to_string())
+            None => Err("RAG system not initialized".to_string())
         }
     }?;
     
-    system.delete_document(&document_id)
+    system.delete_document(&documentId)
         .await
         .map_err(|e| e.to_string())?;
     
-    Ok(format!("Document {} deleted successfully", document_id))
+    Ok(format!("Document {} deleted successfully", documentId))
 }
 
 #[tauri::command]
-pub async fn search_enhanced_documents(
+pub async fn search_documents(
     query: String,
-    context_document_ids: Vec<String>,
+    contextDocumentIds: Vec<String>,
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<Vec<EnhancedDocumentChunk>, String> {
     let system = {
         let rag_state = state.0.lock().map_err(|e| e.to_string())?;
         match &*rag_state {
             Some(sys) => Ok(sys.clone()),
-            None => Err("Enhanced RAG system not initialized".to_string())
+            None => Err("RAG system not initialized".to_string())
         }
     }?;
     
-    system.search_documents(&query, context_document_ids)
+    system.search_documents(&query, contextDocumentIds)
         .await
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn generate_enhanced_embeddings(
-    document_id: String,
+pub async fn generate_embeddings(
+    documentId: String,
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<String, String> {
     let system = {
         let rag_state = state.0.lock().map_err(|e| e.to_string())?;
         match &*rag_state {
             Some(sys) => Ok(sys.clone()),
-            None => Err("Enhanced RAG system not initialized".to_string())
+            None => Err("RAG system not initialized".to_string())
         }
     }?;
     
-    system.generate_embeddings(&document_id)
+    system.generate_embeddings(&documentId)
         .await
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn clear_enhanced_embedding_cache(
+pub async fn clear_embedding_cache(
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<String, String> {
     let system = {
         let rag_state = state.0.lock().map_err(|e| e.to_string())?;
         match &*rag_state {
             Some(sys) => Ok(sys.clone()),
-            None => Err("Enhanced RAG system not initialized".to_string())
+            None => Err("RAG system not initialized".to_string())
         }
     }?;
     
@@ -142,7 +142,7 @@ pub async fn clear_enhanced_embedding_cache(
 }
 
 #[tauri::command]
-pub async fn update_enhanced_rag_settings(
+pub async fn update_rag_settings(
     settings: EnhancedRagSettings,
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<String, String> {
@@ -154,12 +154,12 @@ pub async fn update_enhanced_rag_settings(
                 .map_err(|e| e.to_string())?;
             Ok("Settings updated successfully".to_string())
         }
-        None => Err("Enhanced RAG system not initialized".to_string())
+        None => Err(" RAG system not initialized".to_string())
     }
 }
 
 #[tauri::command]
-pub async fn get_enhanced_rag_settings(
+pub async fn get_rag_settings(
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<EnhancedRagSettings, String> {
     let rag_state = state.0.lock().map_err(|e| e.to_string())?;
@@ -168,12 +168,12 @@ pub async fn get_enhanced_rag_settings(
         Some(system) => {
             Ok(system.get_settings())
         }
-        None => Err("Enhanced RAG system not initialized".to_string())
+        None => Err(" RAG system not initialized".to_string())
     }
 }
 
 #[tauri::command]
-pub async fn get_enhanced_storage_stats(
+pub async fn get_storage_stats(
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<HashMap<String, Value>, String> {
     let rag_state = state.0.lock().map_err(|e| e.to_string())?;
@@ -183,7 +183,7 @@ pub async fn get_enhanced_storage_stats(
             system.get_storage_stats()
                 .map_err(|e| e.to_string())
         }
-        None => Err("Enhanced RAG system not initialized".to_string())
+        None => Err(" RAG system not initialized".to_string())
     }
 }
 
@@ -213,14 +213,14 @@ pub async fn get_embedding_status(
             
             Ok(status)
         }
-        None => Err("Enhanced RAG system not initialized".to_string())
+        None => Err(" RAG system not initialized".to_string())
     }
 }
 
 #[tauri::command]
 pub async fn check_document_duplicate(
-    file_name: String,
-    file_content: Vec<u8>,
+    fileName: String,
+    fileContent: Vec<u8>,
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<HashMap<String, Value>, String> {
     use sha2::{Sha256, Digest};
@@ -229,14 +229,14 @@ pub async fn check_document_duplicate(
         let rag_state = state.0.lock().map_err(|e| e.to_string())?;
         match &*rag_state {
             Some(sys) => Ok(sys.clone()),
-            None => Err("Enhanced RAG system not initialized".to_string())
+            None => Err("RAG system not initialized".to_string())
         }
     }?;
     
     // Calculate content hash
     let mut hasher = Sha256::new();
-    hasher.update(&file_content);
-    hasher.update(file_name.as_bytes());
+    hasher.update(&fileContent);
+    hasher.update(fileName.as_bytes());
     let content_hash = format!("{:x}", hasher.finalize());
     
     // Check if duplicate exists
@@ -259,62 +259,62 @@ pub async fn check_document_duplicate(
 
 #[tauri::command]
 pub async fn get_document_embedding_status(
-    document_ids: Vec<String>,
+    documentIds: Vec<String>,
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<HashMap<String, String>, String> {
     let system = {
         let rag_state = state.0.lock().map_err(|e| e.to_string())?;
         match &*rag_state {
             Some(sys) => Ok(sys.clone()),
-            None => Err("Enhanced RAG system not initialized".to_string())
+            None => Err("RAG system not initialized".to_string())
         }
     }?;
     
-    system.get_embedding_status_for_documents(&document_ids)
+    system.get_embedding_status_for_documents(&documentIds)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn ensure_documents_ready_for_search(
-    document_ids: Vec<String>,
+    documentIds: Vec<String>,
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<HashMap<String, String>, String> {
     let system = {
         let rag_state = state.0.lock().map_err(|e| e.to_string())?;
         match &*rag_state {
             Some(sys) => Ok(sys.clone()),
-            None => Err("Enhanced RAG system not initialized".to_string())
+            None => Err("RAG system not initialized".to_string())
         }
     }?;
     
-    system.ensure_documents_ready_for_search(&document_ids)
+    system.ensure_documents_ready_for_search(&documentIds)
         .await
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn generate_embeddings_for_selection(
-    document_ids: Vec<String>,
+    documentIds: Vec<String>,
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<String, String> {
     let system = {
         let rag_state = state.0.lock().map_err(|e| e.to_string())?;
         match &*rag_state {
             Some(sys) => Ok(sys.clone()),
-            None => Err("Enhanced RAG system not initialized".to_string())
+            None => Err("RAG system not initialized".to_string())
         }
     }?;
     
-    system.generate_embeddings_for_selection(&document_ids)
+    system.generate_embeddings_for_selection(&documentIds)
         .await
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn validate_enhanced_file_upload(
-    file_name: String,
-    file_size: usize,
-    file_type: String,
+pub async fn validate_rag_file_upload(
+    fileName: String,
+    fileSize: usize,
+    fileType: String,
     state: State<'_, EnhancedRagSystemState>,
 ) -> Result<HashMap<String, Value>, String> {
     let rag_state = state.0.lock().map_err(|e| e.to_string())?;
@@ -324,13 +324,13 @@ pub async fn validate_enhanced_file_upload(
             let settings = system.get_settings();
             let mut validation = HashMap::new();
             
-            let file_size_mb = file_size as f64 / (1024.0 * 1024.0);
+            let file_size_mb = fileSize as f64 / (1024.0 * 1024.0);
             let size_valid = file_size_mb <= settings.max_document_size_mb;
             
             // Check supported file types
             let supported_types = vec!["text/plain", "application/pdf", "text/markdown", 
                                      "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
-            let type_valid = supported_types.iter().any(|&t| file_type.contains(t)) || file_type.starts_with("text/");
+            let type_valid = supported_types.iter().any(|&t| fileType.contains(t)) || fileType.starts_with("text/");
             
             validation.insert("valid".to_string(), serde_json::json!(size_valid && type_valid));
             validation.insert("size_valid".to_string(), serde_json::json!(size_valid));
@@ -345,12 +345,12 @@ pub async fn validate_enhanced_file_upload(
                 ));
             } else if !type_valid {
                 validation.insert("error".to_string(), serde_json::json!(
-                    format!("File type '{}' is not supported", file_type)
+                    format!("File type '{}' is not supported", fileType)
                 ));
             }
             
             Ok(validation)
         }
-        None => Err("Enhanced RAG system not initialized".to_string())
+        None => Err(" RAG system not initialized".to_string())
     }
 }

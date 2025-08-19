@@ -1,8 +1,7 @@
 // mcpService.ts - Handles MCP (Model Context Protocol) operations and tool calling
 import { invoke } from '@tauri-apps/api/core'
 import { SessionManager } from './sessionManager'
-
-let messageIdCounter = 1000 // Use higher counter to avoid conflicts
+import { getNextMessageId } from './messageIdGenerator'
 
 export interface MCPSessionInfo {
   id: string
@@ -109,7 +108,7 @@ export class MCPService {
       
       if (!cleanMessage) {
         SessionManager.addMessageToCurrentChat({
-          id: messageIdCounter++,
+          id: getNextMessageId(),
           sender: 'assistant',
           text: '🔧 **MCP Mode** - Please provide a command after @enteract\n\nExample: `@enteract take a screenshot`',
           timestamp: new Date(),
@@ -120,7 +119,7 @@ export class MCPService {
 
       // Add user message to chat
       SessionManager.addMessageToCurrentChat({
-        id: messageIdCounter++,
+        id: getNextMessageId(),
         sender: 'user',
         text: message,
         timestamp: new Date(),
@@ -133,7 +132,7 @@ export class MCPService {
       console.log('🔧 [MCP] Session ID:', sessionId)
       
       // Add thinking message
-      const thinkingMessageId = messageIdCounter++
+      const thinkingMessageId = getNextMessageId()
       SessionManager.addMessageToCurrentChat({
         id: thinkingMessageId,
         sender: 'assistant',
@@ -230,7 +229,7 @@ export class MCPService {
       console.error('Error processing @enteract message:', error)
       
       SessionManager.addMessageToCurrentChat({
-        id: messageIdCounter++,
+        id: getNextMessageId(),
         sender: 'assistant',
         text: `❌ **MCP Error**: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
         timestamp: new Date(),

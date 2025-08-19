@@ -3,8 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { ScreenshotResponse } from '../types/chat'
 import { SessionManager } from './sessionManager'
-
-let messageIdCounter = 1
+import { getNextMessageId } from './messageIdGenerator'
 
 export class VisionService {
   private static scrollChatToBottom: () => void
@@ -30,7 +29,7 @@ export class VisionService {
       
       // Add screen analysis message to current chat
       SessionManager.addMessageToCurrentChat({
-        id: messageIdCounter++,
+        id: getNextMessageId(),
         sender: 'user',
         text: `🔍 Screen captured for analysis (${screenshot.width}×${screenshot.height})`,
         timestamp: new Date(),
@@ -44,7 +43,7 @@ export class VisionService {
       const currentHistory = SessionManager.getCurrentChatHistory().value
       const streamingMessageIndex = currentHistory.length
       SessionManager.addMessageToCurrentChat({
-        id: messageIdCounter++,
+        id: getNextMessageId(),
         sender: 'assistant',
         text: '🔍 Initializing Qwen vision model for analysis▋',
         timestamp: new Date(),
@@ -158,7 +157,7 @@ export class VisionService {
       }
       
       SessionManager.addMessageToCurrentChat({
-        id: messageIdCounter++,
+        id: getNextMessageId(),
         sender: 'assistant',
         text: errorMessage,
         timestamp: new Date(),

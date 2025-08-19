@@ -171,9 +171,9 @@ impl ChatStorage {
 
             // Insert messages and related data
             for message in session.history {
-                // Insert main message
+                // Insert main message - use INSERT OR IGNORE to handle any duplicate IDs gracefully
                 tx.execute(
-                    "INSERT INTO chat_messages (id, session_id, text, sender, timestamp, is_interim, confidence, source, message_type) 
+                    "INSERT OR IGNORE INTO chat_messages (id, session_id, text, sender, timestamp, is_interim, confidence, source, message_type) 
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     params![
                         message.id, session.id, message.text, message.sender, message.timestamp,
@@ -186,7 +186,7 @@ impl ChatStorage {
                 if let Some(attachments) = message.attachments {
                     for attachment in attachments {
                         tx.execute(
-                            "INSERT INTO message_attachments (id, message_id, type, name, size, mime_type, url, base64_data, thumbnail, extracted_text, width, height, upload_progress, upload_status, error)
+                            "INSERT OR IGNORE INTO message_attachments (id, message_id, type, name, size, mime_type, url, base64_data, thumbnail, extracted_text, width, height, upload_progress, upload_status, error)
                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             params![
                                 attachment.id, message.id, attachment.attachment_type, attachment.name, attachment.size,
@@ -203,7 +203,7 @@ impl ChatStorage {
                 // Insert thinking process if present
                 if let Some(thinking) = message.thinking {
                     tx.execute(
-                        "INSERT INTO thinking_processes (message_id, is_visible, content, is_streaming) VALUES (?, ?, ?, ?)",
+                        "INSERT OR IGNORE INTO thinking_processes (message_id, is_visible, content, is_streaming) VALUES (?, ?, ?, ?)",
                         params![
                             message.id, 
                             if thinking.is_visible { 1 } else { 0 },
@@ -218,7 +218,7 @@ impl ChatStorage {
                     if let Some(steps) = thinking.steps {
                         for step in steps {
                             tx.execute(
-                                "INSERT INTO thinking_steps (id, thinking_id, title, content, timestamp, status) VALUES (?, ?, ?, ?, ?, ?)",
+                                "INSERT OR IGNORE INTO thinking_steps (id, thinking_id, title, content, timestamp, status) VALUES (?, ?, ?, ?, ?, ?)",
                                 params![step.id, thinking_id, step.title, step.content, step.timestamp, step.status]
                             )?;
                         }
@@ -228,7 +228,7 @@ impl ChatStorage {
                 // Insert message metadata if present
                 if let Some(metadata) = message.metadata {
                     tx.execute(
-                        "INSERT INTO message_metadata (message_id, agent_type, model, tokens, processing_time, analysis_types, search_queries, sources)
+                        "INSERT OR IGNORE INTO message_metadata (message_id, agent_type, model, tokens, processing_time, analysis_types, search_queries, sources)
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         params![
                             message.id, metadata.agent_type, metadata.model, metadata.tokens, metadata.processing_time,

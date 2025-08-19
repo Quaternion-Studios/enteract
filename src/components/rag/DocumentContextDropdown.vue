@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { DocumentTextIcon, FolderIcon, MagnifyingGlassIcon, XMarkIcon, CloudArrowUpIcon } from '@heroicons/vue/24/outline'
 import { CheckCircleIcon } from '@heroicons/vue/24/solid'
-import type { Document } from '../../services/rag'
+import type { EnhancedDocument as Document } from '../../services/rag'
 
 interface Props {
   documents: Document[]

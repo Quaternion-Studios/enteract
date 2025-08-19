@@ -1,8 +1,9 @@
 pub mod types;
-pub mod legacy;
 pub mod enhanced;
 pub mod services;
 pub mod utils;
 
-pub use legacy::commands::*;
+// Re-export enhanced commands as the primary RAG interface
 pub use enhanced::commands::*;
+pub use enhanced::context_commands::*;
+pub use enhanced::system::*;

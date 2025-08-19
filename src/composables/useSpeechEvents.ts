@@ -1,6 +1,5 @@
 // Removed unused imports
-
-let messageIdCounter = 1
+import { getNextMessageId } from './messageIdGenerator'
 
 export const useSpeechEvents = (
   chatHistory: any,
@@ -60,7 +59,7 @@ export const useSpeechEvents = (
       } else {
         // Add new interim message
         chatHistory.value.push({
-          id: messageIdCounter++,
+          id: getNextMessageId(),
           sender: 'transcription',
           text: interimText,
           timestamp: new Date(),
@@ -98,7 +97,7 @@ export const useSpeechEvents = (
       } else {
         // If confidence is low, still add as user message but with a note
         chatHistory.value.push({
-          id: messageIdCounter++,
+          id: getNextMessageId(),
           sender: 'user',
           text: `${finalText} (transcribed)`,
           timestamp: new Date(),

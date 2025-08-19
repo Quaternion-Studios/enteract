@@ -1,6 +1,5 @@
 import { ref, computed } from 'vue'
-import { ragService, type Document, type DocumentChunk, type RagSettings } from '../../services/rag'
-import { enhancedRagService, type EnhancedDocument, type EnhancedDocumentChunk, type EnhancedRagSettings } from '../../services/rag'
+import { ragService as enhancedRagService, type EnhancedDocument as Document, type EnhancedDocumentChunk as DocumentChunk, type EnhancedRagSettings as RagSettings } from '../../services/rag'
 
 export interface UploadContext {
   source: 'chat' | 'settings'
@@ -10,17 +9,17 @@ export interface UploadContext {
 
 export function useRagDocuments() {
   // State - Using enhanced types but keeping backward compatibility
-  const documents = ref<EnhancedDocument[]>([])
+  const documents = ref<Document[]>([])
   const selectedDocumentIds = ref<Set<string>>(new Set())
   const sessionSelectedDocuments = ref<Map<string, Set<string>>>(new Map()) // Per-session selection
   const currentSessionId = ref<string | null>(null)
   const isLoading = ref(false)
   const error = ref<string | null>(null)
   const uploadProgress = ref<Map<string, number>>(new Map())
-  const settings = ref<EnhancedRagSettings | null>(null)
-  const searchResults = ref<EnhancedDocumentChunk[]>([])
+  const settings = ref<RagSettings | null>(null)
+  const searchResults = ref<DocumentChunk[]>([])
   const isSearching = ref(false)
-  const useEnhanced = ref(true) // Flag to enable enhanced RAG system
+  const useEnhanced = ref(true) // Always true now - legacy system removed
   const embeddingStatus = ref<Map<string, string>>(new Map())
   
   // Chat-specific document limit
@@ -86,11 +85,7 @@ export function useRagDocuments() {
       isLoading.value = true
       error.value = null
       
-      if (useEnhanced.value) {
-        await enhancedRagService.initialize()
-      } else {
-        await ragService.initialize()
-      }
+      await enhancedRagService.initialize()
       await loadDocuments()
       await loadSettings()
       
@@ -109,9 +104,7 @@ export function useRagDocuments() {
       isLoading.value = true
       error.value = null
       
-      const docs = useEnhanced.value 
-        ? await enhancedRagService.getAllDocuments()
-        : await ragService.getAllDocuments() as EnhancedDocument[]
+      const docs = await enhancedRagService.getAllDocuments()
       documents.value = docs
       
       // Restore selected documents from localStorage (global fallback)
@@ -136,30 +129,27 @@ export function useRagDocuments() {
   // Load settings
   const loadSettings = async () => {
     try {
-      settings.value = useEnhanced.value 
-        ? await enhancedRagService.getSettings()
-        : await ragService.getSettings() as EnhancedRagSettings
+      settings.value = await enhancedRagService.getSettings()
     } catch (err) {
       console.error('Failed to load RAG settings:', err)
     }
   }
 
   // Upload document with progress tracking and context
-  const uploadDocument = async (file: File, context?: UploadContext): Promise<EnhancedDocument | null> => {
+  const uploadDocument = async (file: File, context?: UploadContext): Promise<Document | null> => {
     try {
       error.value = null
       
       // Validate file
-      if (useEnhanced.value) {
-        const validation = await enhancedRagService.validateFileUpload(file)
-        if (!validation.valid) {
-          error.value = validation.error || 'File validation failed'
-          return null
-        }
-        
-        // Check for duplicates in enhanced system
-        const duplicateCheck = await enhancedRagService.checkDocumentDuplicate(file)
-        if (duplicateCheck.isDuplicate && duplicateCheck.existingDocument) {
+      const validation = await enhancedRagService.validateFileUpload(file)
+      if (!validation.valid) {
+        error.value = validation.error || 'File validation failed'
+        return null
+      }
+      
+      // Check for duplicates in enhanced system
+      const duplicateCheck = await enhancedRagService.checkDocumentDuplicate(file)
+      if (duplicateCheck.isDuplicate && duplicateCheck.existingDocument) {
           console.info(`Document "${file.name}" already exists, using existing version`)
           
           // Add existing document to the list if not already there
@@ -193,13 +183,6 @@ export function useRagDocuments() {
           
           return duplicateCheck.existingDocument
         }
-      } else if (settings.value) {
-        const validation = ragService.validateFile(file, settings.value as RagSettings)
-        if (!validation.valid) {
-          error.value = validation.error || 'File validation failed'
-          return null
-        }
-      }
       
       // Track upload progress
       const fileId = `${file.name}-${Date.now()}`
@@ -214,9 +197,7 @@ export function useRagDocuments() {
       }, 200)
       
       // Upload document
-      const document = useEnhanced.value 
-        ? await enhancedRagService.uploadDocument(file)
-        : await ragService.uploadDocument(file) as EnhancedDocument
+      const document = await enhancedRagService.uploadDocument(file)
       
       // Complete progress
       clearInterval(progressInterval)
@@ -270,8 +251,8 @@ export function useRagDocuments() {
   }
 
   // Upload multiple documents with context
-  const uploadDocuments = async (files: FileList | File[], context?: UploadContext): Promise<EnhancedDocument[]> => {
-    const uploaded: EnhancedDocument[] = []
+  const uploadDocuments = async (files: FileList | File[], context?: UploadContext): Promise<Document[]> => {
+    const uploaded: Document[] = []
     
     for (const file of files) {
       const doc = await uploadDocument(file, context)
@@ -288,11 +269,7 @@ export function useRagDocuments() {
     try {
       error.value = null
       
-      if (useEnhanced.value) {
-        await enhancedRagService.deleteDocument(documentId)
-      } else {
-        await ragService.deleteDocument(documentId)
-      }
+      await enhancedRagService.deleteDocument(documentId)
       
       // Remove from local state
       documents.value = documents.value.filter(doc => doc.id !== documentId)
@@ -374,7 +351,6 @@ export function useRagDocuments() {
 
   // Enhanced embedding status management
   const updateEmbeddingStatus = async () => {
-    if (!useEnhanced.value) return
     
     try {
       const docIds = documents.value.map(doc => doc.id)
@@ -388,7 +364,7 @@ export function useRagDocuments() {
   }
 
   const ensureDocumentEmbeddings = async (documentIds: string[]) => {
-    if (!useEnhanced.value || documentIds.length === 0) return
+    if (documentIds.length === 0) return
     
     try {
       await enhancedRagService.generateEmbeddingsForSelection(documentIds)
@@ -432,7 +408,7 @@ export function useRagDocuments() {
       const contextIds = useSelectedOnly ? Array.from(activeSelection) : []
       
       // Ensure selected documents are ready for search
-      if (contextIds.length > 0 && useEnhanced.value) {
+      if (contextIds.length > 0) {
         const readiness = await ensureSelectionReady()
         console.log(`📊 Document readiness: ${readiness.ready.length} ready, ${readiness.pending.length} pending`)
         
@@ -442,9 +418,7 @@ export function useRagDocuments() {
         }
       }
       
-      searchResults.value = useEnhanced.value 
-        ? await enhancedRagService.searchDocuments(query, contextIds)
-        : await ragService.searchDocuments(query, contextIds) as EnhancedDocumentChunk[]
+      searchResults.value = await enhancedRagService.searchDocuments(query, contextIds)
       
       return searchResults.value
     } catch (err) {
@@ -457,18 +431,14 @@ export function useRagDocuments() {
   }
 
   // Get document by ID
-  const getDocumentById = (documentId: string): EnhancedDocument | undefined => {
+  const getDocumentById = (documentId: string): Document | undefined => {
     return documents.value.find(doc => doc.id === documentId)
   }
 
   // Generate embeddings for a document
   const generateEmbeddings = async (documentId: string) => {
     try {
-      if (useEnhanced.value) {
-        await enhancedRagService.generateEmbeddings(documentId)
-      } else {
-        await ragService.generateEmbeddings(documentId)
-      }
+      await enhancedRagService.generateEmbeddings(documentId)
       
       // Update document cache status
       const doc = documents.value.find(d => d.id === documentId)
@@ -486,11 +456,7 @@ export function useRagDocuments() {
   // Clear embedding cache
   const clearEmbeddingCache = async () => {
     try {
-      if (useEnhanced.value) {
-        await enhancedRagService.clearEmbeddingCache()
-      } else {
-        await ragService.clearEmbeddingCache()
-      }
+      await enhancedRagService.clearEmbeddingCache()
       
       // Update all documents cache status
       documents.value.forEach(doc => {
@@ -505,16 +471,12 @@ export function useRagDocuments() {
   }
 
   // Update settings
-  const updateSettings = async (newSettings: Partial<EnhancedRagSettings>) => {
+  const updateSettings = async (newSettings: Partial<RagSettings>) => {
     try {
       if (!settings.value) return
       
       const updatedSettings = { ...settings.value, ...newSettings }
-      if (useEnhanced.value) {
-        await enhancedRagService.updateSettings(updatedSettings)
-      } else {
-        await ragService.updateSettings(updatedSettings as RagSettings)
-      }
+      await enhancedRagService.updateSettings(updatedSettings)
       settings.value = updatedSettings
     } catch (err) {
       console.error('Failed to update settings:', err)
@@ -524,9 +486,7 @@ export function useRagDocuments() {
   // Get storage statistics
   const getStorageStats = async () => {
     try {
-      return useEnhanced.value 
-        ? await enhancedRagService.getStorageStats()
-        : await ragService.getStorageStats()
+      return await enhancedRagService.getStorageStats()
     } catch (err) {
       console.error('Failed to get storage stats:', err)
       return null
@@ -534,68 +494,28 @@ export function useRagDocuments() {
   }
 
   // Format document context for AI
-  const formatContextForAI = (chunks: EnhancedDocumentChunk[]): string => {
-    return useEnhanced.value 
-      ? enhancedRagService.formatContextForAI(chunks)
-      : formatLegacyContextForAI(chunks)
+  const formatContextForAI = (chunks: DocumentChunk[]): string => {
+    return enhancedRagService.formatContextForAI(chunks)
   }
 
-  // Legacy formatting for backward compatibility
-  const formatLegacyContextForAI = (chunks: EnhancedDocumentChunk[]): string => {
-    if (chunks.length === 0) return ''
-    
-    const grouped = chunks.reduce((acc, chunk) => {
-      if (!acc[chunk.document_id]) {
-        acc[chunk.document_id] = []
-      }
-      acc[chunk.document_id].push(chunk)
-      return acc
-    }, {} as Record<string, EnhancedDocumentChunk[]>)
-    
-    let context = 'Relevant document context:\n\n'
-    
-    for (const [docId, docChunks] of Object.entries(grouped)) {
-      const doc = getDocumentById(docId)
-      if (doc) {
-        context += `From "${doc.file_name}":\n`
-        docChunks.forEach(chunk => {
-          context += `- ${chunk.content.trim()}\n`
-        })
-        context += '\n'
-      }
-    }
-    
-    return context
-  }
 
   // Enhanced methods
   const getEmbeddingStatus = async () => {
-    if (useEnhanced.value) {
-      try {
-        return await enhancedRagService.getEmbeddingStatus()
-      } catch (err) {
-        console.error('Failed to get embedding status:', err)
-        return null
-      }
+    try {
+      return await enhancedRagService.getEmbeddingStatus()
+    } catch (err) {
+      console.error('Failed to get embedding status:', err)
+      return null
     }
-    return null
   }
 
   const validateFile = async (file: File) => {
-    if (useEnhanced.value) {
-      try {
-        return await enhancedRagService.validateFileUpload(file)
-      } catch (err) {
-        console.error('Failed to validate file:', err)
-        return { valid: false, error: 'Validation failed' }
-      }
+    try {
+      return await enhancedRagService.validateFileUpload(file)
+    } catch (err) {
+      console.error('Failed to validate file:', err)
+      return { valid: false, error: 'Validation failed' }
     }
-    
-    // Legacy validation
-    if (settings.value) {
-      return ragService.validateFile(file, settings.value as RagSettings)
-    }
-    return { valid: true }
   }
 
   return {
@@ -653,7 +573,6 @@ export function useRagDocuments() {
     CHAT_DOCUMENT_LIMIT,
     
     // Service references for advanced usage
-    ragService,
     enhancedRagService
   }
 }

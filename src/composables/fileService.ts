@@ -1,7 +1,6 @@
 // fileService.ts - Handles file upload functionality
 import { SessionManager } from './sessionManager'
-
-let messageIdCounter = 1
+import { getNextMessageId } from './messageIdGenerator'
 
 export class FileService {
   private static scrollChatToBottom: () => void
@@ -37,7 +36,7 @@ export class FileService {
           
           // Add file upload message to current chat
           SessionManager.addMessageToCurrentChat({
-            id: messageIdCounter++,
+            id: getNextMessageId(),
             sender: 'system',
             text: `📁 Uploading: **${file.name}** (${file.type}, ${(file.size / 1024).toFixed(1)} KB)...`,
             timestamp: new Date(),
@@ -51,7 +50,7 @@ export class FileService {
               
               // Update message with success
               SessionManager.addMessageToCurrentChat({
-                id: messageIdCounter++,
+                id: getNextMessageId(),
                 sender: 'system',
                 text: `✅ Document **${file.name}** uploaded and indexed successfully!\n\n` +
                       `📊 Document ID: ${document.id}\n` +
@@ -70,7 +69,7 @@ export class FileService {
           } else {
             // Fallback to simple upload notification
             SessionManager.addMessageToCurrentChat({
-              id: messageIdCounter++,
+              id: getNextMessageId(),
               sender: 'system',
               text: `✅ File ready for analysis. You can now ask questions about this ${file.type.includes('image') ? 'image' : 'document'}.`,
               timestamp: new Date(),
@@ -86,7 +85,7 @@ export class FileService {
         } catch (error) {
           console.error('File upload error:', error)
           SessionManager.addMessageToCurrentChat({
-            id: messageIdCounter++,
+            id: getNextMessageId(),
             sender: 'system',
             text: `❌ File upload failed: ${error}`,
             timestamp: new Date(),

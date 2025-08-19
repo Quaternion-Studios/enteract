@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import type { ChatMessage, WindowPosition } from '../types'
 import { useSpeechTranscription } from '../composables/useSpeechTranscription'
+import { getNextMessageId } from '../composables/messageIdGenerator'
 
 export const useAppStore = defineStore('app', () => {
   // State
@@ -20,8 +21,8 @@ export const useAppStore = defineStore('app', () => {
   const transcriptionCleanup = ref<(() => void) | null>(null)
   
   const chatMessages = ref<ChatMessage[]>([
-    { id: 1, text: "Welcome to your agentic assistant", sender: "assistant", timestamp: new Date() },
-    { id: 2, text: "How can I help you today?", sender: "assistant", timestamp: new Date() }
+    { id: getNextMessageId(), text: "Welcome to your agentic assistant", sender: "assistant", timestamp: new Date() },
+    { id: getNextMessageId(), text: "How can I help you today?", sender: "assistant", timestamp: new Date() }
   ])
   
   const windowPosition = ref<WindowPosition>({ x: 0, y: 0 })
@@ -79,7 +80,7 @@ export const useAppStore = defineStore('app', () => {
     source?: 'web-speech' | 'whisper' | 'typed'
   }) => {
     const message: ChatMessage = {
-      id: Date.now(),
+      id: getNextMessageId(),
       text,
       sender,
       timestamp: new Date(),
