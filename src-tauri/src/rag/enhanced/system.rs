@@ -13,6 +13,7 @@ use sha2::{Sha256, Digest};
 use crate::rag::services::embedding::{SimpleEmbeddingService as EmbeddingService, EmbeddingConfig};
 use crate::rag::services::search::{SearchService, SearchConfig, SearchResult};
 use crate::rag::services::chunking::{ChunkingService, ChunkingConfig, TextChunk, extract_text_from_pdf, clean_text};
+use crate::rag::services::context_engine::ContextEngine;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EnhancedDocument {
@@ -87,6 +88,7 @@ pub struct EnhancedRagSystem {
     embedding_service: Arc<EmbeddingService>,
     search_service: Arc<SearchService>,
     chunking_service: Arc<Mutex<ChunkingService>>,
+    pub context_engine: Arc<ContextEngine>,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +129,12 @@ impl EnhancedRagSystem {
             Some(settings.lock().unwrap().chunking_config.clone())
         )?));
         
+        // Initialize context engine
+        let context_engine = Arc::new(ContextEngine::new(
+            embedding_service.clone(),
+            search_service.clone(),
+        ));
+        
         let system = Self {
             db_path,
             storage_path,
@@ -136,6 +144,7 @@ impl EnhancedRagSystem {
             embedding_service,
             search_service,
             chunking_service,
+            context_engine,
         };
         
         // Initialize database and services
@@ -1023,5 +1032,167 @@ impl EnhancedRagSystem {
         }
         
         Ok(status_map)
+    }
+    
+    // Context-aware search methods
+    pub async fn search_with_context(
+        &self,
+        query: &str,
+        context_document_ids: Vec<String>,
+        max_chunks: usize,
+    ) -> Result<Vec<EnhancedDocumentChunk>> {
+        // First get context from specified documents
+        let context_chunks = self.context_engine
+            .get_context_for_message(query, context_document_ids.clone(), 3)
+            .await?;
+        
+        // Enhance query with context
+        let enhanced_query = if !context_chunks.is_empty() {
+            format!("{} Context: {}", query, context_chunks.join(" "))
+        } else {
+            query.to_string()
+        };
+        
+        // Record document access
+        self.context_engine.record_document_usage("search_context").await;
+        
+        // Perform enhanced search
+        self.search_documents(&enhanced_query, context_document_ids).await
+    }
+    
+    pub async fn search_in_document(
+        &self,
+        document_id: &str,
+        query: &str,
+        max_chunks: usize,
+    ) -> Result<Vec<SearchResult>> {
+        // Use search service to find chunks in specific document
+        let results = self.search_service.search_bm25(
+            &format!("{} document_id:{}", query, document_id), 
+            max_chunks
+        )?;
+        
+        Ok(results)
+    }
+    
+    pub async fn get_document(&self, document_id: &str) -> Result<EnhancedDocument> {
+        let conn = Connection::open(&self.db_path)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, file_name, file_path, file_type, file_size, content,
+                    created_at, updated_at, access_count, last_accessed, is_cached,
+                    embedding_status, chunk_count, metadata, content_hash
+             FROM enhanced_documents
+             WHERE id = ?1"
+        )?;
+        
+        let document = stmt.query_row([document_id], |row| {
+            Ok(EnhancedDocument {
+                id: row.get(0)?,
+                file_name: row.get(1)?,
+                file_path: row.get(2)?,
+                file_type: row.get(3)?,
+                file_size: row.get(4)?,
+                content: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                access_count: row.get(8)?,
+                last_accessed: row.get(9)?,
+                is_cached: row.get::<_, i32>(10)? != 0,
+                embedding_status: row.get(11)?,
+                chunk_count: row.get(12)?,
+                metadata: row.get(13)?,
+                content_hash: row.get(14)?,
+            })
+        })?;
+        
+        Ok(document)
+    }
+    
+    pub async fn process_document_embeddings(
+        &self,
+        document_id: &str,
+        high_priority: bool,
+    ) -> Result<()> {
+        // Trigger embedding processing
+        let document = self.get_document(document_id).await?;
+        
+        if document.embedding_status == "completed" {
+            return Ok(()); // Already processed
+        }
+        
+        // Update status to processing
+        let conn = Connection::open(&self.db_path)?;
+        conn.execute(
+            "UPDATE enhanced_documents SET embedding_status = 'processing' WHERE id = ?1",
+            params![document_id],
+        )?;
+        
+        // Process embeddings in background
+        let embedding_service = self.embedding_service.clone();
+        let chunking_service = self.chunking_service.clone();
+        let db_path_clone = self.db_path.clone();
+        let doc_id = document_id.to_string();
+        let doc_content = document.content.clone();
+        
+        tokio::spawn(async move {
+            let result = Self::process_document_chunks_async(
+                embedding_service,
+                chunking_service,
+                db_path_clone.clone(),
+                doc_id.clone(),
+                doc_content,
+            ).await;
+            
+            // Update status based on result
+            if let Ok(conn) = Connection::open(&db_path_clone) {
+                let status = if result.is_ok() { "completed" } else { "failed" };
+                let _ = conn.execute(
+                    "UPDATE enhanced_documents SET embedding_status = ?1 WHERE id = ?2",
+                    params![status, doc_id],
+                );
+            }
+        });
+        
+        Ok(())
+    }
+    
+    async fn process_document_chunks_async(
+        embedding_service: Arc<EmbeddingService>,
+        chunking_service: Arc<Mutex<ChunkingService>>,
+        db_path: PathBuf,
+        document_id: String,
+        content: String,
+    ) -> Result<()> {
+        // Create chunks
+        let chunks = {
+            let chunking = chunking_service.lock().unwrap();
+            chunking.chunk_text(&content)?
+        };
+        
+        // Generate embeddings for chunks
+        let conn = Connection::open(&db_path)?;
+        
+        for (i, chunk) in chunks.iter().enumerate() {
+            let embedding = embedding_service.embed_query(&chunk.content)?;
+            
+            // Store chunk with embedding
+            conn.execute(
+                "INSERT OR REPLACE INTO enhanced_document_chunks 
+                 (id, document_id, chunk_index, content, start_char, end_char, token_count, embedding)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    document_id,
+                    i as i32,
+                    chunk.content,
+                    chunk.start_char as i32,
+                    chunk.end_char as i32,
+                    chunk.token_count as i32,
+                    serde_json::to_string(&embedding).unwrap(),
+                ],
+            )?;
+        }
+        
+        Ok(())
     }
 }

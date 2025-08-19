@@ -14,11 +14,14 @@ import { useSpeechEvents } from '../../composables/useSpeechEvents'
 import { useSpeechTranscription } from '../../composables/useSpeechTranscription'
 import { useWindowRegistration } from '../../composables/useWindowRegistry'
 import { useRagDocuments } from '../../composables/rag'
+import { useContextIntelligence } from '../../composables/useContextIntelligence'
 import AgentActionButtons from './AgentActionButtons.vue'
 import ModelSelector from './ModelSelector.vue'
 import ChatWindowSidebarAdapter from './ChatWindowSidebarAdapter.vue'
 import DocumentContextDropdown from '../rag/DocumentContextDropdown.vue'
 import DocumentPillsContainer from './DocumentPillsContainer.vue'
+import ContextIndicator from '../rag/ContextIndicator.vue'
+import ContextFlowVisualization from '../rag/ContextFlowVisualization.vue'
 import { FileService } from '../../composables/fileService'
 
 interface Props {
@@ -64,8 +67,44 @@ const availableAgents = [
   { id: 'enteract', name: '@enteract', description: 'MCP computer use agent with tool access' },
   { id: 'coding', name: '@coding', description: 'Programming assistance and code review' },
   { id: 'research', name: '@research', description: 'Advanced research with step-by-step thinking' },
-  { id: 'vision', name: '@vision', description: 'Visual content analysis' }
+  { id: 'vision', name: '@vision', description: 'Visual content analysis' },
+  { id: 'context', name: '@context', description: 'Context-aware RAG with intelligent document selection' }
 ]
+
+// Context Intelligence System
+const contextIntelligence = useContextIntelligence()
+const contextMode = ref<'auto' | 'manual' | 'search' | 'all' | 'none'>('auto')
+const isContextMode = computed(() => {
+  return chatMessage.value.trim().toLowerCase().startsWith('@context')
+})
+
+// Context visualization state
+const showContextDetails = ref(false)
+const showContextFlow = ref(false)
+const contextFlows = ref<Array<{
+  id: string
+  type: 'query' | 'context' | 'result'
+  content: string
+  timestamp: Date
+  relevance?: number
+  documents?: string[]
+}>>([])
+
+const addContextFlow = (type: 'query' | 'context' | 'result', content: string, relevance?: number, documents?: string[]) => {
+  contextFlows.value.push({
+    id: `flow_${Date.now()}_${Math.random()}`,
+    type,
+    content,
+    timestamp: new Date(),
+    relevance,
+    documents,
+  })
+  
+  // Keep only last 50 flows
+  if (contextFlows.value.length > 50) {
+    contextFlows.value = contextFlows.value.slice(-50)
+  }
+}
 
 // MCP mode detection - only highlight when actively typing @enteract
 const isMCPMode = computed(() => {
@@ -138,16 +177,25 @@ const selectMention = (agent: {id: string, name: string, description: string}) =
   }
 }
 
-// Parse message for agent mentions before sending
+// Parse message for agent mentions and context modes before sending
 const parseAgentFromMessage = (message: string): string => {
-  const mentionMatch = message.match(/@(\w+)/)
+  const mentionMatch = message.match(/@(\w+)(?:\s+(\w+))?/)
   if (mentionMatch) {
     const mentionedAgent = mentionMatch[1]
+    const contextCommand = mentionMatch[2]
     const agent = availableAgents.find(a => a.id === mentionedAgent)
     if (agent) {
       currentAgent.value = agent.id
+      
+      // Handle @context with specific modes
+      if (agent.id === 'context' && contextCommand) {
+        if (['auto', 'manual', 'search', 'all'].includes(contextCommand)) {
+          contextMode.value = contextCommand as typeof contextMode.value
+        }
+      }
+      
       // Remove the mention from the message
-      return message.replace(/@\w+\s*/, '').trim()
+      return message.replace(/@\w+(?:\s+\w+)?\s*/, '').trim()
     }
   }
   return message
@@ -249,17 +297,45 @@ const handleDrop = async (event: DragEvent) => {
   }
 }
 
-// Enhanced send message with agent detection and RAG context
+// Enhanced send message with agent detection, context intelligence, and RAG
 const sendMessageWithAgent = async () => {
   if (!chatMessage.value.trim()) return
   
   let originalMessage = chatMessage.value.trim()
   const cleanedMessage = parseAgentFromMessage(originalMessage)
   
-  // Prepare selected document IDs for RAG search
-  const selectedDocIds = Array.from(ragDocuments.selectedDocumentIds.value)
+  // Prepare document context based on agent type
+  let selectedDocIds = Array.from(ragDocuments.selectedDocumentIds.value)
   
-  if (selectedDocIds.length > 0) {
+  // Handle @context agent with intelligent document selection
+  if (currentAgent.value === 'context') {
+    // Add query to context flow
+    addContextFlow('query', cleanedMessage || originalMessage)
+    
+    // Analyze conversation for context relevance
+    await contextIntelligence.analyzeConversation(chatHistory.value.map(msg => ({
+      role: msg.sender === 'You' ? 'user' : 'assistant',
+      content: msg.text
+    })))
+    
+    // Select documents based on context mode
+    const contextDocs = await contextIntelligence.selectDocuments(contextMode.value, cleanedMessage)
+    
+    // Merge with manually selected documents
+    selectedDocIds = [...new Set([...selectedDocIds, ...contextDocs])]
+    
+    // Add documents to active context
+    for (const docId of contextDocs) {
+      await contextIntelligence.addDocumentToContext(docId)
+    }
+    
+    // Add context flow entry
+    if (contextDocs.length > 0) {
+      addContextFlow('context', `Selected ${contextDocs.length} documents for context`, 0.8, contextDocs)
+    }
+    
+    console.log(`🧠 Context mode: ${contextMode.value}, using ${selectedDocIds.length} documents`)
+  } else if (selectedDocIds.length > 0) {
     console.log(`📚 Sending message with ${selectedDocIds.length} selected documents for RAG context`)
   }
   
@@ -786,8 +862,8 @@ onUnmounted(() => {
                 @input="handleInput"
                 @keydown="handleEnhancedKeydown"
                 class="chat-input"
-                :class="{ 'mcp-mode': isMCPMode }"
-                :placeholder="isMCPMode ? 'MCP Mode: Enter computer use command...' : 'Ask any AI agent... (use @ to mention agents, / to add documents)'"
+                :class="{ 'mcp-mode': isMCPMode, 'context-mode': isContextMode }"
+                :placeholder="isMCPMode ? 'MCP Mode: Enter computer use command...' : isContextMode ? 'Context Mode: Ask questions with intelligent document selection...' : 'Ask any AI agent... (use @ to mention agents, / to add documents)'"
                 type="text"
               />
               
@@ -830,6 +906,33 @@ onUnmounted(() => {
         </div> <!-- End main-content -->
       </div> <!-- End window-content -->
       
+      <!-- Context Visualization -->
+      <div v-if="isContextMode || contextIntelligence.isContextActive.value" class="context-visualization">
+        <ContextIndicator 
+          :show-context-details="showContextDetails"
+          :compact-mode="false"
+          @toggle-details="showContextDetails = !showContextDetails"
+          @clear-context="() => { contextFlows = []; showContextDetails = false }"
+        />
+        
+        <div v-if="showContextDetails" class="context-flow-panel">
+          <button 
+            @click="showContextFlow = !showContextFlow"
+            class="flow-toggle-btn"
+          >
+            Context Flow {{ showContextFlow ? '▼' : '▶' }}
+          </button>
+          
+          <div v-if="showContextFlow" class="flow-container">
+            <ContextFlowVisualization 
+              :flows="contextFlows"
+              :show-timestamp="true"
+              :max-visible="20"
+            />
+          </div>
+        </div>
+      </div>
+      
       <!-- Document Context Dropdown -->
       <DocumentContextDropdown
         :documents="ragDocuments.documents.value"
@@ -838,6 +941,7 @@ onUnmounted(() => {
         :position="documentDropdownPosition"
         :search-query="documentSearchQuery"
         :max-selections="5"
+        :enable-smart-suggestions="currentAgent === 'context'"
         @select="handleDocumentSelect"
         @deselect="handleDocumentDeselect"
         @insert-reference="handleInsertReference"
@@ -1360,5 +1464,31 @@ onUnmounted(() => {
 .chat-list::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.2);
   border-radius: 2px;
+}
+
+/* Context Visualization Styles */
+.context-visualization {
+  @apply absolute top-2 right-2 z-40 max-w-sm;
+}
+
+.context-flow-panel {
+  @apply mt-3 bg-gray-900/95 rounded-lg border border-white/10 overflow-hidden;
+}
+
+.flow-toggle-btn {
+  @apply w-full p-2 text-sm font-medium text-white/80 hover:text-white;
+  @apply bg-gray-800/50 hover:bg-gray-800 border-b border-white/10;
+  @apply transition-colors duration-200 text-left;
+}
+
+.flow-container {
+  @apply h-48 overflow-hidden;
+}
+
+/* Context mode input styling */
+.chat-input.context-mode {
+  border-color: rgba(52, 211, 153, 0.6) !important;
+  background: rgba(52, 211, 153, 0.1) !important;
+  box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.2) !important;
 }
 </style>

@@ -137,7 +137,7 @@ pub fn check_database_health(app_handle: AppHandle) -> Result<DatabaseHealth, St
     let can_connect = true;
 
     // Test read capability
-    let can_read = match connection.execute("SELECT 1", params![]) {
+    let can_read = match connection.query_row("SELECT 1", params![], |_| Ok(())) {
         Ok(_) => true,
         Err(e) => {
             errors.push(format!("Cannot read from database: {}", e));

@@ -3,51 +3,175 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use super::commands::EnhancedRagSystemState;
-use crate::rag::services::{ContextSuggestion, RankedDocument, RelatedDocument, FileChangeEvent};
+use crate::rag::services::{ContextSuggestion, RelatedDocument, FileChangeEvent};
+use crate::rag::services::context_engine::{ContextSession, ContextDocument, ContextAnalysis, ConversationMessage, ContextMode};
+
+#[tauri::command]
+pub async fn initialize_context_session(
+    chat_id: String,
+    state: State<'_, EnhancedRagSystemState>,
+) -> Result<ContextSession, String> {
+    let context_engine = {
+        let rag_state = state.0.lock().map_err(|e| e.to_string())?;
+        match &*rag_state {
+            Some(system) => system.context_engine.clone(),
+            None => return Err("RAG system not initialized".to_string())
+        }
+    };
+    
+    context_engine
+        .initialize_context_session(chat_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_cached_context_documents(
+    state: State<'_, EnhancedRagSystemState>,
+) -> Result<Vec<ContextDocument>, String> {
+    let context_engine = {
+        let rag_state = state.0.lock().map_err(|e| e.to_string())?;
+        match &*rag_state {
+            Some(system) => system.context_engine.clone(),
+            None => return Err("RAG system not initialized".to_string())
+        }
+    };
+    
+    context_engine
+        .get_cached_context_documents()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_document_access(
+    document_id: String,
+    access_count: u32,
+    last_accessed: String,
+    state: State<'_, EnhancedRagSystemState>,
+) -> Result<(), String> {
+    let context_engine = {
+        let rag_state = state.0.lock().map_err(|e| e.to_string())?;
+        match &*rag_state {
+            Some(system) => system.context_engine.clone(),
+            None => return Err("RAG system not initialized".to_string())
+        }
+    };
+    
+    context_engine
+        .update_document_access(document_id, access_count, last_accessed)
+        .await
+        .map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 pub async fn search_context_documents(
     query: String,
+    limit: usize,
     state: State<'_, EnhancedRagSystemState>,
-) -> Result<Vec<RankedDocument>, String> {
-    let rag_state = state.0.lock().map_err(|e| e.to_string())?;
-    
-    match &*rag_state {
-        Some(system) => {
-            // Use the context engine from the system (would need to be added to EnhancedRagSystem)
-            // For now, simulate the response
-            let documents = system.get_all_documents().map_err(|e| e.to_string())?;
-            
-            let mut ranked_docs = Vec::new();
-            for doc in documents {
-                if doc.content.to_lowercase().contains(&query.to_lowercase()) ||
-                   doc.file_name.to_lowercase().contains(&query.to_lowercase()) {
-                    
-                    let relevance_score = if doc.file_name.to_lowercase().contains(&query.to_lowercase()) {
-                        0.9
-                    } else {
-                        0.7
-                    };
-                    
-                    let mut rank_factors = HashMap::new();
-                    rank_factors.insert("semantic_relevance".to_string(), relevance_score);
-                    rank_factors.insert("usage_frequency".to_string(), doc.access_count as f32 / 100.0);
-                    
-                    ranked_docs.push(RankedDocument {
-                        document: doc,
-                        relevance_score,
-                        rank_factors,
-                    });
-                }
-            }
-            
-            // Sort by relevance
-            ranked_docs.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score).unwrap());
-            
-            Ok(ranked_docs.into_iter().take(20).collect())
+) -> Result<Vec<String>, String> {
+    let context_engine = {
+        let rag_state = state.0.lock().map_err(|e| e.to_string())?;
+        match &*rag_state {
+            Some(system) => system.context_engine.clone(),
+            None => return Err("RAG system not initialized".to_string())
         }
-        None => Err("RAG system not initialized".to_string())
-    }
+    };
+    
+    context_engine
+        .search_context_documents(&query, limit)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_context_for_message(
+    message: String,
+    document_ids: Vec<String>,
+    max_chunks: usize,
+    state: State<'_, EnhancedRagSystemState>,
+) -> Result<Vec<String>, String> {
+    let context_engine = {
+        let rag_state = state.0.lock().map_err(|e| e.to_string())?;
+        match &*rag_state {
+            Some(system) => system.context_engine.clone(),
+            None => return Err("RAG system not initialized".to_string())
+        }
+    };
+    
+    context_engine
+        .get_context_for_message(&message, document_ids, max_chunks)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn process_document_embeddings(
+    document_id: String,
+    priority: String,
+    state: State<'_, EnhancedRagSystemState>,
+) -> Result<(), String> {
+    let context_engine = {
+        let rag_state = state.0.lock().map_err(|e| e.to_string())?;
+        match &*rag_state {
+            Some(system) => system.context_engine.clone(),
+            None => return Err("RAG system not initialized".to_string())
+        }
+    };
+    
+    context_engine
+        .process_document_embeddings(&document_id, &priority)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_context_session(
+    session_id: String,
+    mode: String,
+    state: State<'_, EnhancedRagSystemState>,
+) -> Result<(), String> {
+    let context_engine = {
+        let rag_state = state.0.lock().map_err(|e| e.to_string())?;
+        match &*rag_state {
+            Some(system) => system.context_engine.clone(),
+            None => return Err("RAG system not initialized".to_string())
+        }
+    };
+    
+    // Parse mode string to ContextMode enum
+    let context_mode = match mode.as_str() {
+        "auto" => ContextMode::Auto,
+        "manual" => ContextMode::Manual,
+        "search" => ContextMode::Search,
+        "all" => ContextMode::All,
+        "none" => ContextMode::None,
+        _ => return Err(format!("Invalid context mode: {}", mode)),
+    };
+    
+    context_engine
+        .update_context_session(&session_id, context_mode)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn analyze_conversation_context_enhanced(
+    messages: Vec<ConversationMessage>,
+    state: State<'_, EnhancedRagSystemState>,
+) -> Result<ContextAnalysis, String> {
+    let context_engine = {
+        let rag_state = state.0.lock().map_err(|e| e.to_string())?;
+        match &*rag_state {
+            Some(system) => system.context_engine.clone(),
+            None => return Err("RAG system not initialized".to_string())
+        }
+    };
+    
+    context_engine
+        .analyze_conversation_context(messages)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -72,6 +196,8 @@ pub async fn get_context_suggestions(
             relevance_score: 0.8 - (i as f32 * 0.1),
             reason: format!("Contains keyword: {}", keyword),
             preview: format!("This document discusses {} in detail...", keyword),
+            confidence: 0.8 - (i as f32 * 0.1),
+            relevant_chunks: vec![format!("Relevant content about {}...", keyword)],
         });
     }
     

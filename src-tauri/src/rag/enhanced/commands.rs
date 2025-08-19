@@ -312,7 +312,7 @@ pub async fn generate_embeddings_for_selection(
 
 #[tauri::command]
 pub async fn validate_rag_file_upload(
-    fileName: String,
+    _fileName: String,
     fileSize: usize,
     fileType: String,
     state: State<'_, EnhancedRagSystemState>,

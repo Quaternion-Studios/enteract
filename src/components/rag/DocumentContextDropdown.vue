@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { DocumentTextIcon, FolderIcon, MagnifyingGlassIcon, XMarkIcon, CloudArrowUpIcon } from '@heroicons/vue/24/outline'
+import { DocumentTextIcon, FolderIcon, MagnifyingGlassIcon, XMarkIcon, CloudArrowUpIcon, SparklesIcon, LightBulbIcon, ClockIcon } from '@heroicons/vue/24/outline'
 import { CheckCircleIcon } from '@heroicons/vue/24/solid'
 import type { EnhancedDocument as Document } from '../../services/rag'
+import { useContextIntelligence } from '../../composables/useContextIntelligence'
 
 interface Props {
   documents: Document[]
@@ -11,6 +12,7 @@ interface Props {
   show: boolean
   position?: { x: number; y: number }
   searchQuery?: string
+  enableSmartSuggestions?: boolean
 }
 
 interface Emits {
@@ -23,7 +25,8 @@ interface Emits {
 
 const props = withDefaults(defineProps<Props>(), {
   maxSelections: 5,
-  searchQuery: ''
+  searchQuery: '',
+  enableSmartSuggestions: true
 })
 
 const emit = defineEmits<Emits>()
@@ -33,6 +36,12 @@ const searchInput = ref('')
 const hoveredDocumentId = ref<string | null>(null)
 const dropdownRef = ref<HTMLElement>()
 const fileInputRef = ref<HTMLInputElement>()
+const activeTab = ref<'suggested' | 'recent' | 'all'>('suggested')
+
+// Context Intelligence
+const contextIntelligence = useContextIntelligence()
+const suggestedDocuments = computed(() => contextIntelligence.getSuggestedDocuments())
+const activeContextDocuments = computed(() => contextIntelligence.getActiveDocuments())
 
 // Computed
 const filteredDocuments = computed(() => {
@@ -47,13 +56,54 @@ const filteredDocuments = computed(() => {
   )
 })
 
+// Smart document categorization
+const smartFilteredDocuments = computed(() => {
+  const docs = filteredDocuments.value
+  
+  if (activeTab.value === 'suggested' && props.enableSmartSuggestions) {
+    // Show AI-suggested documents based on conversation context
+    const suggestedIds = new Set(suggestedDocuments.value.map(d => d.id))
+    return docs.filter(doc => suggestedIds.has(doc.id))
+  } else if (activeTab.value === 'recent') {
+    // Show recently accessed documents
+    const activeIds = new Set(activeContextDocuments.value.map(d => d.id))
+    return docs.filter(doc => activeIds.has(doc.id) || doc.is_cached)
+      .sort((a, b) => {
+        // Sort by last accessed time if available
+        const aTime = activeContextDocuments.value.find(d => d.id === a.id)?.last_accessed
+        const bTime = activeContextDocuments.value.find(d => d.id === b.id)?.last_accessed
+        if (aTime && bTime) {
+          return new Date(bTime).getTime() - new Date(aTime).getTime()
+        }
+        return 0
+      })
+  } else {
+    // Show all documents
+    return docs
+  }
+})
+
 const cachedDocuments = computed(() => {
-  return filteredDocuments.value.filter(doc => doc.is_cached)
+  return smartFilteredDocuments.value.filter(doc => doc.is_cached)
 })
 
 const uncachedDocuments = computed(() => {
-  return filteredDocuments.value.filter(doc => !doc.is_cached)
+  return smartFilteredDocuments.value.filter(doc => !doc.is_cached)
 })
+
+// Check if document is suggested by AI
+const isDocumentSuggested = (docId: string): boolean => {
+  return suggestedDocuments.value.some(d => d.id === docId)
+}
+
+// Get suggestion reason for a document
+const getSuggestionReason = (docId: string): string | null => {
+  const contextDoc = suggestedDocuments.value.find(d => d.id === docId)
+  if (contextDoc && contextDoc.metadata?.suggestion_reason) {
+    return contextDoc.metadata.suggestion_reason
+  }
+  return null
+}
 
 const canSelectMore = computed(() => {
   return props.selectedDocumentIds.size < props.maxSelections
@@ -176,12 +226,80 @@ onMounted(() => {
         />
       </div>
       
+      <!-- Tab Navigation for Smart Suggestions -->
+      <div v-if="enableSmartSuggestions" class="tab-navigation">
+        <button 
+          @click="activeTab = 'suggested'"
+          :class="['tab-button', { active: activeTab === 'suggested' }]"
+        >
+          <SparklesIcon class="w-3.5 h-3.5" />
+          <span>Suggested</span>
+        </button>
+        <button 
+          @click="activeTab = 'recent'"
+          :class="['tab-button', { active: activeTab === 'recent' }]"
+        >
+          <ClockIcon class="w-3.5 h-3.5" />
+          <span>Recent</span>
+        </button>
+        <button 
+          @click="activeTab = 'all'"
+          :class="['tab-button', { active: activeTab === 'all' }]"
+        >
+          <FolderIcon class="w-3.5 h-3.5" />
+          <span>All</span>
+        </button>
+      </div>
+      
       <!-- Document List -->
       <div class="document-list">
+        <!-- AI Suggested Context (when in suggested tab) -->
+        <div v-if="activeTab === 'suggested' && suggestedDocuments.length > 0" class="document-section suggested-section">
+          <div class="section-header">
+            <span class="section-title">
+              <LightBulbIcon class="w-4 h-4 inline-block" />
+              AI Recommended
+            </span>
+            <span class="suggestion-badge">Based on conversation</span>
+          </div>
+          <div 
+            v-for="doc in suggestedDocuments"
+            :key="doc.id"
+            class="document-item suggested-item"
+            :class="{ 
+              selected: selectedDocumentIds.has(doc.id),
+              disabled: !canSelectMore && !selectedDocumentIds.has(doc.id)
+            }"
+            @click="toggleDocument(doc)"
+            @mouseenter="hoveredDocumentId = doc.id"
+            @mouseleave="hoveredDocumentId = null"
+          >
+            <div class="document-checkbox">
+              <CheckCircleIcon v-if="selectedDocumentIds.has(doc.id)" class="w-4 h-4 text-emerald-400" />
+              <div v-else class="checkbox-empty" />
+            </div>
+            <div class="document-info">
+              <div class="document-name">
+                <span class="file-icon">{{ getFileIcon(doc.file_type || '') }}</span>
+                <span class="file-name">{{ doc.filename }}</span>
+                <SparklesIcon class="w-3 h-3 text-yellow-400 ml-1" />
+              </div>
+              <div class="document-meta">
+                <span class="relevance-score" v-if="doc.relevance_score">
+                  {{ Math.round(doc.relevance_score * 100) }}% relevant
+                </span>
+                <span v-if="getSuggestionReason(doc.id)" class="suggestion-reason">
+                  • {{ getSuggestionReason(doc.id) }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+        
         <!-- Cached Documents Section -->
         <div v-if="cachedDocuments.length > 0" class="document-section">
           <div class="section-header">
-            <span class="section-title">Cached Documents</span>
+            <span class="section-title">{{ activeTab === 'suggested' ? 'Other' : '' }} Cached Documents</span>
             <span class="cache-indicator active">⚡</span>
           </div>
           <div 
@@ -344,6 +462,58 @@ onMounted(() => {
 .dropdown-header {
   @apply flex items-center justify-between px-4 py-3 border-b border-white/10;
   background: rgba(0, 0, 0, 0.2);
+}
+
+/* Tab Navigation Styles */
+.tab-navigation {
+  @apply flex items-center gap-1 px-3 py-2 border-b border-white/10;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.tab-button {
+  @apply flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium;
+  @apply text-white/60 hover:text-white/80 transition-all duration-200;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.tab-button.active {
+  @apply text-white bg-white/10;
+}
+
+.tab-button svg {
+  @apply opacity-70;
+}
+
+.tab-button.active svg {
+  @apply opacity-100;
+}
+
+/* Suggested Section Styles */
+.suggested-section {
+  @apply border-l-2 border-yellow-400/30;
+}
+
+.suggested-item {
+  @apply relative;
+}
+
+.suggested-item::before {
+  content: '';
+  @apply absolute inset-0 bg-gradient-to-r from-yellow-400/5 to-transparent pointer-events-none;
+}
+
+.suggestion-badge {
+  @apply text-[10px] px-2 py-0.5 rounded-full bg-yellow-400/10 text-yellow-400/80;
+}
+
+.relevance-score {
+  @apply text-[10px] font-medium text-emerald-400/80;
+}
+
+.suggestion-reason {
+  @apply text-[10px] text-white/40 italic;
 }
 
 .header-title {
