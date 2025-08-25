@@ -171,7 +171,7 @@ We welcome contributions! Whether you're fixing bugs, adding features, or improv
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
@@ -186,7 +186,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [x] Core UI components and window management
 - [x] Speech recognition integration
 - [x] SQL Based RAG
-- [ ] Computer Use Agent (CUA) MCP
+- [ ] Computer Use Agent (CUA) MCP - work in progress currently just using Regex
 
 ### Phase 2:
 - [ ] Cloud integration (OAI API, Deepseek API, Azure AI)
