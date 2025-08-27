@@ -68,7 +68,7 @@
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd embedded-agentic-assistant
+cd enteract
 
 # Install dependencies
 npm install
