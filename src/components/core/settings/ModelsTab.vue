@@ -47,7 +47,18 @@ const props = defineProps({
       </div>
       <div v-else-if="ollamaStatus.status === 'not_running'" class="status-error">
         <span class="text-red-400">● Model manager is not running</span>
-        <p class="text-white/60 text-xs mt-1">Please start Model manager to manage models</p>
+        <div class="text-white/60 text-xs mt-2 space-y-1">
+          <p class="font-medium">To get started:</p>
+          <ol class="list-decimal list-inside space-y-1 text-white/50">
+            <li>Install Ollama from <a href="https://ollama.com" target="_blank" class="text-blue-400 hover:underline">ollama.com</a></li>
+            <li>Open Terminal and run: <code class="bg-white/10 px-1 rounded">ollama serve</code></li>
+            <li>Refresh this page to see available models</li>
+          </ol>
+          <p class="text-white/40 mt-2">For resource-constrained Macs, recommended models:</p>
+          <p class="text-white/40">• gemma3:1b-it-qat (1GB) - Fastest</p>
+          <p class="text-white/40">• phi3-mini (2GB) - Balanced</p>
+          <p class="text-white/40">• qwen2.5:0.5b (500MB) - Smallest</p>
+        </div>
       </div>
       <div v-else-if="ollamaStatus.status === 'checking'" class="status-loading">
         <span class="text-yellow-400">● Checking model manager status...</span>
