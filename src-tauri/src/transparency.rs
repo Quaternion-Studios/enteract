@@ -19,15 +19,16 @@ pub async fn set_window_transparency(window: Window, alpha: f64) -> Result<(), S
             unsafe {
                 // Get current extended window style
                 let mut ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-                
+
                 // Add layered window style for transparency
                 ex_style |= WS_EX_LAYERED.0 as isize;
-                
-                // Add transparent style for click-through when very transparent
-                if clamped_alpha < 0.1 {
+
+                // Add transparent style for click-through when window has any transparency
+                // UI elements with pointer-events in CSS will still be interactive
+                if clamped_alpha < 1.0 {
                     ex_style |= WS_EX_TRANSPARENT.0 as isize;
                 } else {
-                    // Remove transparent style to enable interaction
+                    // Remove transparent style to enable interaction when fully opaque
                     ex_style &= !(WS_EX_TRANSPARENT.0 as isize);
                 }
                 
@@ -45,14 +46,15 @@ pub async fn set_window_transparency(window: Window, alpha: f64) -> Result<(), S
     {
         use objc::runtime::{Object, Sel};
         use objc::{msg_send, sel, sel_impl};
-        
+
         if let Ok(ns_window) = window.ns_window() {
             let ns_window = ns_window as *mut Object;
             unsafe {
                 let _: () = msg_send![ns_window, setAlphaValue: clamped_alpha];
-                
-                // Enable/disable mouse events based on transparency
-                let ignore_mouse = clamped_alpha < 0.1;
+
+                // Enable click-through whenever window has any transparency
+                // UI elements with pointer-events:auto in CSS will still be interactive
+                let ignore_mouse = clamped_alpha < 1.0;
                 let _: () = msg_send![ns_window, setIgnoresMouseEvents: ignore_mouse];
             }
         }
