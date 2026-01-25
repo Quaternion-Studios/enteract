@@ -1,4 +1,4 @@
-// src-tauri/src/audio_loopback/settings.rs
+// src-tauri/src/audio_loopback/shared/settings.rs
 use crate::audio_loopback::types::AudioDeviceSettings;
 use std::collections::HashMap;
 use std::path::PathBuf;

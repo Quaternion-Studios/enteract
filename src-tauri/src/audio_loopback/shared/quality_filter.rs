@@ -1,4 +1,4 @@
-// src-tauri/src/audio_loopback/quality_filter.rs
+// src-tauri/src/audio_loopback/shared/quality_filter.rs
 
 // Sandbox-matching quality estimation functions
 pub fn estimate_transcription_confidence(text: &str) -> f32 {

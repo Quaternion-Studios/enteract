@@ -1,4 +1,4 @@
-// src-tauri/src/audio_loopback/audio_processor.rs
+// src-tauri/src/audio_loopback/shared/audio_processor.rs
 // use crate::audio_loopback::quality_filter::{estimate_transcription_confidence, is_transcription_quality_ok};
 use anyhow::Result;
 use tauri::{AppHandle, Emitter};
@@ -61,7 +61,7 @@ pub async fn process_audio_for_transcription(
     let audio_base64 = base64::prelude::BASE64_STANDARD.encode(&pcm16_bytes);
     
     // Load settings to get the selected loopback whisper model
-    let model_size = match crate::audio_loopback::settings::load_general_settings().await {
+    let model_size = match crate::audio_loopback::shared::settings::load_general_settings().await {
         Ok(Some(settings)) => {
             if let Some(model) = settings.get("loopbackWhisperModel") {
                 if let Some(model_str) = model.as_str() {

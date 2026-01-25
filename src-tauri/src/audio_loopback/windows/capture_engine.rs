@@ -1,7 +1,7 @@
-// src-tauri/src/audio_loopback/capture_engine.rs
+// src-tauri/src/audio_loopback/windows/capture_engine.rs
 use crate::audio_loopback::types::*;
-use crate::audio_loopback::device_enumerator::WASAPILoopbackEnumerator;
-use crate::audio_loopback::audio_processor::{process_audio_for_transcription, process_audio_chunk, calculate_audio_level};
+use crate::audio_loopback::windows::device_enumerator::WASAPILoopbackEnumerator;
+use crate::audio_loopback::shared::audio_processor::{process_audio_for_transcription, process_audio_chunk, calculate_audio_level};
 use anyhow::Result;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
