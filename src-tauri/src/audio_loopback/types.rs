@@ -35,9 +35,18 @@ pub enum DeviceType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LoopbackMethod {
-    RenderLoopback,
-    CaptureDevice,
-    StereoMix,
+    // Windows-specific methods
+    RenderLoopback,  // WASAPI render endpoint loopback
+    CaptureDevice,   // WASAPI capture device
+    StereoMix,       // Legacy Windows Stereo Mix
+
+    // macOS-specific methods
+    #[cfg(target_os = "macos")]
+    CoreAudioTap,    // macOS 14.2+ CoreAudio Taps (preferred)
+    #[cfg(target_os = "macos")]
+    VirtualDevice,   // Virtual audio devices (BlackHole, etc.)
+    #[cfg(target_os = "macos")]
+    ScreenCaptureKit,// macOS 13+ ScreenCaptureKit audio
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
