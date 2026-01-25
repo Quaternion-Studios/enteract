@@ -7,7 +7,6 @@
 use crate::audio_loopback::shared::audio_processor::process_audio_for_transcription;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
 
 /// macOS audio capture engine using CPAL
 pub struct CPALCaptureEngine {
@@ -15,7 +14,6 @@ pub struct CPALCaptureEngine {
     is_capturing: bool,
     stream: Option<cpal::Stream>,
     audio_buffer: Arc<Mutex<Vec<f32>>>,
-    stop_tx: Option<mpsc::Sender<()>>,
 }
 
 impl CPALCaptureEngine {
@@ -25,7 +23,6 @@ impl CPALCaptureEngine {
             is_capturing: false,
             stream: None,
             audio_buffer: Arc::new(Mutex::new(Vec::new())),
-            stop_tx: None,
         }
     }
 
@@ -49,10 +46,6 @@ impl CPALCaptureEngine {
         let sample_rate = config.sample_rate();
         println!("[CPAL] Starting capture: device={}, sample_rate={:?}, channels={}, format={:?}",
             self.device_id, sample_rate, config.channels(), config.sample_format());
-
-        // Create channel for stop signal
-        let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-        self.stop_tx = Some(stop_tx);
 
         // Clone audio buffer for callback
         let audio_buffer = Arc::clone(&self.audio_buffer);
@@ -116,16 +109,6 @@ impl CPALCaptureEngine {
         self.stream = Some(stream);
         self.is_capturing = true;
 
-        // Spawn task to wait for stop signal
-        let stream_handle = Arc::new(Mutex::new(self.stream.take()));
-        tokio::spawn(async move {
-            let _ = stop_rx.recv().await;
-            if let Some(stream) = stream_handle.lock().unwrap().take() {
-                let _ = stream.pause();
-                println!("[CPAL] Stream stopped");
-            }
-        });
-
         Ok(())
     }
 
@@ -135,9 +118,10 @@ impl CPALCaptureEngine {
             return Ok(());
         }
 
-        // Send stop signal
-        if let Some(tx) = self.stop_tx.take() {
-            let _ = tx.send(()).await;
+        // Pause and drop the stream
+        if let Some(stream) = self.stream.take() {
+            let _ = stream.pause();
+            drop(stream);
         }
 
         // Clear audio buffer
@@ -145,7 +129,6 @@ impl CPALCaptureEngine {
             buffer.clear();
         }
 
-        self.stream = None;
         self.is_capturing = false;
 
         println!("[CPAL] Capture stopped");
@@ -191,8 +174,9 @@ impl CPALCaptureEngine {
                 let samples_to_process: Vec<f32> = buffer.drain(..BUFFER_SIZE).collect();
 
                 // Process in background (don't block audio thread)
+                // Use std::thread::spawn since CPAL callback is not in Tokio context
                 let app_handle_clone = app_handle.clone();
-                tokio::spawn(async move {
+                std::thread::spawn(move || {
                     // Convert f32 samples to PCM16 bytes (what process_audio_for_transcription expects)
                     let pcm_bytes: Vec<u8> = samples_to_process
                         .iter()
@@ -202,15 +186,19 @@ impl CPALCaptureEngine {
                         })
                         .collect();
 
-                    if let Err(e) = process_audio_for_transcription(
-                        pcm_bytes,
-                        TARGET_SAMPLE_RATE,
-                        app_handle_clone,
-                    )
-                    .await
-                    {
-                        eprintln!("[CPAL] Audio processing error: {}", e);
-                    }
+                    // Run async function in new Tokio runtime
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    rt.block_on(async {
+                        if let Err(e) = process_audio_for_transcription(
+                            pcm_bytes,
+                            TARGET_SAMPLE_RATE,
+                            app_handle_clone,
+                        )
+                        .await
+                        {
+                            eprintln!("[CPAL] Audio processing error: {}", e);
+                        }
+                    });
                 });
             }
         }
