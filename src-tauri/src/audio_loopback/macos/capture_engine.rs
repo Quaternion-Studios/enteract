@@ -4,7 +4,7 @@
 // Phase 2 (en-03o): macOS CPAL audio implementation
 // References: Jack's research (resources/MACOS_AUDIO_LOOPBACK_RESEARCH.md)
 
-use crate::audio_loopback::shared::audio_processor::process_audio_for_transcription;
+use crate::audio_loopback::shared::audio_processor::{process_audio_for_transcription, SmartBuffer};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 
@@ -13,16 +13,17 @@ pub struct CPALCaptureEngine {
     device_id: String,
     is_capturing: bool,
     stream: Option<cpal::Stream>,
-    audio_buffer: Arc<Mutex<Vec<f32>>>,
+    smart_buffer: Arc<Mutex<SmartBuffer>>,
 }
 
 impl CPALCaptureEngine {
     pub fn new(device_id: String) -> Self {
+        const TARGET_SAMPLE_RATE: u32 = 16000;
         Self {
             device_id,
             is_capturing: false,
             stream: None,
-            audio_buffer: Arc::new(Mutex::new(Vec::new())),
+            smart_buffer: Arc::new(Mutex::new(SmartBuffer::new(TARGET_SAMPLE_RATE))),
         }
     }
 
@@ -47,8 +48,8 @@ impl CPALCaptureEngine {
         println!("[CPAL] Starting capture: device={}, sample_rate={:?}, channels={}, format={:?}",
             self.device_id, sample_rate, config.channels(), config.sample_format());
 
-        // Clone audio buffer for callback
-        let audio_buffer = Arc::clone(&self.audio_buffer);
+        // Clone smart buffer for callback
+        let smart_buffer = Arc::clone(&self.smart_buffer);
         let app_handle_clone = app_handle.clone();
 
         // Build input stream based on sample format
@@ -57,7 +58,7 @@ impl CPALCaptureEngine {
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        Self::process_audio_callback(data, &audio_buffer, &app_handle_clone);
+                        Self::process_audio_callback(data, &smart_buffer, &app_handle_clone);
                     },
                     |err| eprintln!("[CPAL] Stream error: {}", err),
                     None,
@@ -72,7 +73,7 @@ impl CPALCaptureEngine {
                             .iter()
                             .map(|&sample| sample as f32 / i16::MAX as f32)
                             .collect();
-                        Self::process_audio_callback(&f32_data, &audio_buffer, &app_handle_clone);
+                        Self::process_audio_callback(&f32_data, &smart_buffer, &app_handle_clone);
                     },
                     |err| eprintln!("[CPAL] Stream error: {}", err),
                     None,
@@ -89,7 +90,7 @@ impl CPALCaptureEngine {
                                 (sample as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)
                             })
                             .collect();
-                        Self::process_audio_callback(&f32_data, &audio_buffer, &app_handle_clone);
+                        Self::process_audio_callback(&f32_data, &smart_buffer, &app_handle_clone);
                     },
                     |err| eprintln!("[CPAL] Stream error: {}", err),
                     None,
@@ -124,11 +125,6 @@ impl CPALCaptureEngine {
             drop(stream);
         }
 
-        // Clear audio buffer
-        if let Ok(mut buffer) = self.audio_buffer.lock() {
-            buffer.clear();
-        }
-
         self.is_capturing = false;
 
         println!("[CPAL] Capture stopped");
@@ -140,45 +136,29 @@ impl CPALCaptureEngine {
         self.is_capturing
     }
 
-    /// Get audio samples from buffer
-    pub fn get_audio_samples(&mut self) -> Vec<f32> {
-        if let Ok(mut buffer) = self.audio_buffer.lock() {
-            let samples = buffer.clone();
-            buffer.clear();
-            samples
-        } else {
-            Vec::new()
-        }
-    }
-
-    /// Audio callback handler
+    /// Audio callback handler with smart buffering
     ///
-    /// Processes incoming audio data and buffers it for transcription.
+    /// Processes incoming audio data using silence-based segmentation.
     /// Called by CPAL on audio thread.
     fn process_audio_callback(
         data: &[f32],
-        audio_buffer: &Arc<Mutex<Vec<f32>>>,
+        smart_buffer: &Arc<Mutex<SmartBuffer>>,
         app_handle: &tauri::AppHandle,
     ) {
-        // Append to buffer
-        if let Ok(mut buffer) = audio_buffer.lock() {
-            buffer.extend_from_slice(data);
+        const TARGET_SAMPLE_RATE: u32 = 16000;
 
-            // Process when we have enough samples (4 seconds at 16kHz = 64,000 samples)
-            const TARGET_SAMPLE_RATE: u32 = 16000;
-            const BUFFER_DURATION_SECS: u32 = 4;
-            const BUFFER_SIZE: usize = (TARGET_SAMPLE_RATE * BUFFER_DURATION_SECS) as usize;
-
-            if buffer.len() >= BUFFER_SIZE {
-                // Take samples for processing
-                let samples_to_process: Vec<f32> = buffer.drain(..BUFFER_SIZE).collect();
+        // Add samples to smart buffer and check if a segment is ready
+        if let Ok(mut buffer) = smart_buffer.lock() {
+            if let Some(segment) = buffer.add_samples(data) {
+                // Segment is ready for transcription
+                println!("[CPAL] Smart segment ready: {:.2}s (silence-based)",
+                         segment.len() as f32 / TARGET_SAMPLE_RATE as f32);
 
                 // Process in background (don't block audio thread)
-                // Use std::thread::spawn since CPAL callback is not in Tokio context
                 let app_handle_clone = app_handle.clone();
                 std::thread::spawn(move || {
                     // Convert f32 samples to PCM16 bytes (what process_audio_for_transcription expects)
-                    let pcm_bytes: Vec<u8> = samples_to_process
+                    let pcm_bytes: Vec<u8> = segment
                         .iter()
                         .flat_map(|&sample| {
                             let i16_sample = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;

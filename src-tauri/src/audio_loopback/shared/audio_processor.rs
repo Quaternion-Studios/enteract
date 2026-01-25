@@ -6,6 +6,142 @@ use base64::prelude::*;
 use serde_json;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::sync::{Arc, Mutex};
+
+/// Smart audio buffer with silence-based segmentation
+///
+/// Replaces fixed-time buffering with intelligent segmentation:
+/// - Buffers until 300ms+ silence detected OR max 10s reached
+/// - Maintains 500ms overlap between segments for context
+/// - Enforces min 1.5s buffer for Whisper quality
+pub struct SmartBuffer {
+    samples: Vec<f32>,
+    sample_rate: u32,
+    silence_threshold: f32,      // RMS below this = silence (default: 0.00305 matching Python)
+    min_silence_duration_ms: u32,// Min silence to trigger segment (default: 300ms)
+    max_buffer_duration_ms: u32, // Max buffer before forced flush (default: 10s)
+    min_buffer_duration_ms: u32, // Min buffer for Whisper (default: 1.5s)
+    overlap_duration_ms: u32,    // Overlap between segments (default: 500ms)
+    silence_start_sample: Option<usize>, // Track where silence started
+}
+
+impl SmartBuffer {
+    pub fn new(sample_rate: u32) -> Self {
+        Self {
+            samples: Vec::new(),
+            sample_rate,
+            silence_threshold: 0.00305, // Matching Python RMS threshold
+            min_silence_duration_ms: 300,
+            max_buffer_duration_ms: 10_000,
+            min_buffer_duration_ms: 1_500,
+            overlap_duration_ms: 500,
+            silence_start_sample: None,
+        }
+    }
+
+    /// Add new audio samples to the buffer
+    ///
+    /// Returns Some(segment) if a complete segment is ready for transcription
+    pub fn add_samples(&mut self, new_samples: &[f32]) -> Option<Vec<f32>> {
+        self.samples.extend_from_slice(new_samples);
+
+        // Check if we should segment
+        if let Some(segment) = self.check_for_segment() {
+            return Some(segment);
+        }
+
+        None
+    }
+
+    /// Check if current buffer should be segmented
+    ///
+    /// Segments on:
+    /// 1. Silence detected (300ms+ of low RMS)
+    /// 2. Max duration reached (10s)
+    fn check_for_segment(&mut self) -> Option<Vec<f32>> {
+        let buffer_duration_samples = self.samples.len();
+        let buffer_duration_ms = (buffer_duration_samples as f32 / self.sample_rate as f32 * 1000.0) as u32;
+
+        // Check max duration (forced flush)
+        if buffer_duration_ms >= self.max_buffer_duration_ms {
+            return self.flush_segment();
+        }
+
+        // Check for silence-based segmentation
+        // Analyze recent samples (last 50ms) to detect silence in real-time
+        let analysis_window_samples = (self.sample_rate as f32 * 0.05) as usize; // 50ms
+        if self.samples.len() >= analysis_window_samples {
+            let recent_start = self.samples.len() - analysis_window_samples;
+            let recent_samples = &self.samples[recent_start..];
+
+            let rms = calculate_rms(recent_samples);
+
+            if rms < self.silence_threshold {
+                // Silence detected
+                if self.silence_start_sample.is_none() {
+                    self.silence_start_sample = Some(recent_start);
+                } else {
+                    // Check silence duration
+                    let silence_start = self.silence_start_sample.unwrap();
+                    let silence_duration_samples = self.samples.len() - silence_start;
+                    let silence_duration_ms = (silence_duration_samples as f32 / self.sample_rate as f32 * 1000.0) as u32;
+
+                    if silence_duration_ms >= self.min_silence_duration_ms {
+                        // Sufficient silence - segment here if we have minimum buffer
+                        if buffer_duration_ms >= self.min_buffer_duration_ms {
+                            return self.flush_segment();
+                        }
+                    }
+                }
+            } else {
+                // Speech detected - reset silence tracker
+                self.silence_start_sample = None;
+            }
+        }
+
+        None
+    }
+
+    /// Flush current buffer as a segment, maintaining overlap
+    fn flush_segment(&mut self) -> Option<Vec<f32>> {
+        let buffer_duration_ms = (self.samples.len() as f32 / self.sample_rate as f32 * 1000.0) as u32;
+
+        // Only flush if we meet minimum duration
+        if buffer_duration_ms < self.min_buffer_duration_ms {
+            return None;
+        }
+
+        // Take all samples for this segment
+        let segment = self.samples.clone();
+
+        // Keep overlap samples for next segment (500ms)
+        let overlap_samples = (self.sample_rate as f32 * (self.overlap_duration_ms as f32 / 1000.0)) as usize;
+        if self.samples.len() > overlap_samples {
+            let overlap_start = self.samples.len() - overlap_samples;
+            self.samples = self.samples[overlap_start..].to_vec();
+        } else {
+            self.samples.clear();
+        }
+
+        // Reset silence tracker
+        self.silence_start_sample = None;
+
+        Some(segment)
+    }
+
+    /// Get current buffer duration in milliseconds
+    pub fn buffer_duration_ms(&self) -> u32 {
+        (self.samples.len() as f32 / self.sample_rate as f32 * 1000.0) as u32
+    }
+}
+
+/// Calculate RMS of audio samples
+fn calculate_rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    (samples.iter().map(|&x| x * x).sum::<f32>() / samples.len() as f32).sqrt()
+}
 
 // Audio processing for transcription with improved quality filtering
 #[tauri::command]
