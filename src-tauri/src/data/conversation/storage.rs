@@ -312,7 +312,9 @@ impl ConversationStorage {
         let mut messages = Vec::new();
 
         let mut stmt = self.connection.prepare(
-            "SELECT id, type, source, content, timestamp, confidence 
+            "SELECT id, type, source, content, timestamp, confidence,
+             audio_level, processing_latency_ms, model_version,
+             is_partial, merged_from, speaker_id
              FROM conversation_messages WHERE session_id = ? ORDER BY timestamp"
         )?;
 
@@ -324,6 +326,12 @@ impl ConversationStorage {
                 content: row.get("content")?,
                 timestamp: row.get("timestamp")?,
                 confidence: row.get("confidence")?,
+                audio_level: row.get("audio_level")?,
+                processing_latency_ms: row.get("processing_latency_ms")?,
+                model_version: row.get("model_version")?,
+                is_partial: row.get::<_, Option<i32>>("is_partial")?.map(|v| v != 0),
+                merged_from: row.get("merged_from")?,
+                speaker_id: row.get("speaker_id")?,
                 // Frontend-only fields set to None when loading from DB
                 is_preview: None,
                 is_typing: None,
@@ -421,15 +429,18 @@ impl ConversationStorage {
         }
 
         let affected = self.connection.execute(
-            "INSERT INTO conversation_messages (id, session_id, type, source, content, timestamp, confidence) 
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO conversation_messages (id, session_id, type, source, content, timestamp, confidence,
+             audio_level, processing_latency_ms, model_version, is_partial, merged_from, speaker_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 message.id, session_id, message.message_type, message.source,
-                message.content, message.timestamp, message.confidence
+                message.content, message.timestamp, message.confidence,
+                message.audio_level, message.processing_latency_ms, message.model_version,
+                message.is_partial.map(|v| if v { 1 } else { 0 }), message.merged_from, message.speaker_id
             ]
         ).map_err(|e| {
             println!("❌ Failed to insert message: {}", e);
-            println!("   Message details: id={}, session_id={}, type={}, source={}", 
+            println!("   Message details: id={}, session_id={}, type={}, source={}",
                      message.id, session_id, message.message_type, message.source);
             e
         })?;
@@ -462,11 +473,14 @@ impl ConversationStorage {
 
             if !exists {
                 tx.execute(
-                    "INSERT INTO conversation_messages (id, session_id, type, source, content, timestamp, confidence) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO conversation_messages (id, session_id, type, source, content, timestamp, confidence,
+                     audio_level, processing_latency_ms, model_version, is_partial, merged_from, speaker_id)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     params![
                         message.id, session_id, message.message_type, message.source,
-                        message.content, message.timestamp, message.confidence
+                        message.content, message.timestamp, message.confidence,
+                        message.audio_level, message.processing_latency_ms, message.model_version,
+                        message.is_partial.map(|v| if v { 1 } else { 0 }), message.merged_from, message.speaker_id
                     ]
                 )?;
                 saved_count += 1;

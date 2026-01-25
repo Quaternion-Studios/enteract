@@ -190,7 +190,8 @@ pub fn check_database_health(app_handle: AppHandle) -> Result<DatabaseHealth, St
     let required_tables = vec![
         "chat_sessions", "chat_messages", "message_attachments",
         "thinking_processes", "thinking_steps", "message_metadata",
-        "conversation_sessions", "conversation_messages", "conversation_insights"
+        "conversation_sessions", "conversation_messages", "conversation_insights",
+        "conversation_state", "context_windows"
     ];
 
     let mut missing_tables = Vec::new();
@@ -218,9 +219,12 @@ pub fn check_database_health(app_handle: AppHandle) -> Result<DatabaseHealth, St
     // Check indexes exist
     let required_indexes = vec![
         "idx_chat_sessions_updated_desc",
-        "idx_chat_messages_session_timestamp", 
+        "idx_chat_messages_session_timestamp",
         "idx_conversation_sessions_active_start",
-        "idx_conversation_messages_session_timestamp"
+        "idx_conversation_messages_session_timestamp",
+        "idx_conversation_messages_speaker",
+        "idx_conversation_state_session",
+        "idx_context_windows_session_created"
     ];
 
     let mut missing_indexes = Vec::new();
@@ -553,6 +557,12 @@ fn get_database_schema() -> String {
         content TEXT NOT NULL,
         timestamp INTEGER NOT NULL,
         confidence REAL,
+        audio_level REAL,
+        processing_latency_ms INTEGER,
+        model_version TEXT,
+        is_partial INTEGER CHECK(is_partial IN (0, 1)),
+        merged_from TEXT,
+        speaker_id TEXT,
         FOREIGN KEY (session_id) REFERENCES conversation_sessions(id) ON DELETE CASCADE
     );
 
@@ -564,6 +574,28 @@ fn get_database_schema() -> String {
         timestamp INTEGER NOT NULL,
         context_length INTEGER NOT NULL,
         insight_type TEXT NOT NULL CHECK(insight_type IN ('insight', 'welcome', 'question', 'answer')),
+        FOREIGN KEY (session_id) REFERENCES conversation_sessions(id) ON DELETE CASCADE
+    );
+
+    -- Conversation state table
+    CREATE TABLE IF NOT EXISTS conversation_state (
+        session_id TEXT PRIMARY KEY,
+        state TEXT NOT NULL CHECK(state IN ('listening', 'processing', 'responding', 'idle')),
+        last_user_speech_at INTEGER,
+        last_system_speech_at INTEGER,
+        context_summary TEXT,
+        topic TEXT,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES conversation_sessions(id) ON DELETE CASCADE
+    );
+
+    -- Context windows table
+    CREATE TABLE IF NOT EXISTS context_windows (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        messages_json TEXT NOT NULL,
+        token_count INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
         FOREIGN KEY (session_id) REFERENCES conversation_sessions(id) ON DELETE CASCADE
     );
 
@@ -580,8 +612,11 @@ fn get_database_schema() -> String {
     CREATE INDEX IF NOT EXISTS idx_conversation_messages_session_timestamp ON conversation_messages(session_id, timestamp);
     CREATE INDEX IF NOT EXISTS idx_conversation_messages_type ON conversation_messages(type);
     CREATE INDEX IF NOT EXISTS idx_conversation_messages_source ON conversation_messages(source);
+    CREATE INDEX IF NOT EXISTS idx_conversation_messages_speaker ON conversation_messages(speaker_id);
     CREATE INDEX IF NOT EXISTS idx_conversation_insights_session_timestamp ON conversation_insights(session_id, timestamp);
     CREATE INDEX IF NOT EXISTS idx_conversation_insights_type ON conversation_insights(insight_type);
+    CREATE INDEX IF NOT EXISTS idx_conversation_state_session ON conversation_state(session_id);
+    CREATE INDEX IF NOT EXISTS idx_context_windows_session_created ON context_windows(session_id, created_at DESC);
     "#.to_string()
 }
 

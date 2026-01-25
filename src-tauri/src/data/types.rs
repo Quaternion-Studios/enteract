@@ -123,6 +123,18 @@ pub struct ConversationMessage {
     pub content: String,
     pub timestamp: i64,
     pub confidence: Option<f64>,
+    #[serde(rename = "audioLevel", skip_serializing_if = "Option::is_none")]
+    pub audio_level: Option<f64>,
+    #[serde(rename = "processingLatencyMs", skip_serializing_if = "Option::is_none")]
+    pub processing_latency_ms: Option<i32>,
+    #[serde(rename = "modelVersion", skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<String>,
+    #[serde(rename = "isPartial", skip_serializing_if = "Option::is_none")]
+    pub is_partial: Option<bool>,
+    #[serde(rename = "mergedFrom", skip_serializing_if = "Option::is_none")]
+    pub merged_from: Option<String>,
+    #[serde(rename = "speakerId", skip_serializing_if = "Option::is_none")]
+    pub speaker_id: Option<String>,
     // Additional fields for frontend compatibility
     #[serde(rename = "isPreview", skip_serializing_if = "Option::is_none")]
     pub is_preview: Option<bool>,
@@ -162,6 +174,35 @@ pub struct ConversationSession {
     pub is_active: bool,
     #[serde(default)]
     pub insights: Vec<ConversationInsight>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationState {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub state: String, // 'listening' | 'processing' | 'responding' | 'idle'
+    #[serde(rename = "lastUserSpeechAt")]
+    pub last_user_speech_at: Option<i64>,
+    #[serde(rename = "lastSystemSpeechAt")]
+    pub last_system_speech_at: Option<i64>,
+    #[serde(rename = "contextSummary")]
+    pub context_summary: Option<String>,
+    pub topic: Option<String>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextWindow {
+    pub id: String,
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(rename = "messagesJson")]
+    pub messages_json: String,
+    #[serde(rename = "tokenCount")]
+    pub token_count: i32,
+    #[serde(rename = "createdAt")]
+    pub created_at: i64,
 }
 
 // Request/Response types for conversation operations
