@@ -6,6 +6,8 @@ use crate::data::types::{
     SaveConversationsPayload, LoadConversationsResponse
 };
 use std::path::PathBuf;
+use uuid::Uuid;
+use serde_json;
 
 pub struct ConversationStorage {
     connection: Connection,
@@ -84,6 +86,12 @@ impl ConversationStorage {
                 content TEXT NOT NULL,
                 timestamp INTEGER NOT NULL,
                 confidence REAL,
+                audio_level REAL,
+                processing_latency_ms INTEGER,
+                model_version TEXT,
+                is_partial INTEGER CHECK(is_partial IN (0, 1)),
+                merged_from TEXT,
+                speaker_id TEXT,
                 FOREIGN KEY (session_id) REFERENCES conversation_sessions(id) ON DELETE CASCADE
             );
 
@@ -549,6 +557,123 @@ impl ConversationStorage {
         Ok(())
     }
 
+    /// Merge multiple partial messages into a single complete message
+    /// Returns the ID of the new merged message
+    pub fn merge_partial_messages(&mut self, session_id: &str, partial_message_ids: Vec<String>) -> Result<String> {
+        if partial_message_ids.is_empty() {
+            return Err(rusqlite::Error::InvalidParameterName("No messages to merge".to_string()));
+        }
+
+        println!("🔀 Merging {} partial messages", partial_message_ids.len());
+
+        // Fetch all partial messages
+        let mut partial_messages = Vec::new();
+        for msg_id in &partial_message_ids {
+            let message = self.connection.query_row(
+                "SELECT id, type, source, content, timestamp, confidence,
+                        audio_level, processing_latency_ms, model_version,
+                        is_partial, merged_from, speaker_id
+                 FROM conversation_messages
+                 WHERE id = ? AND session_id = ?",
+                params![msg_id, session_id],
+                |row| {
+                    Ok(ConversationMessage {
+                        id: row.get("id")?,
+                        message_type: row.get("type")?,
+                        source: row.get("source")?,
+                        content: row.get("content")?,
+                        timestamp: row.get("timestamp")?,
+                        confidence: row.get("confidence")?,
+                        audio_level: row.get("audio_level")?,
+                        processing_latency_ms: row.get("processing_latency_ms")?,
+                        model_version: row.get("model_version")?,
+                        is_partial: row.get::<_, Option<i32>>("is_partial")?.map(|v| v != 0),
+                        merged_from: row.get("merged_from")?,
+                        speaker_id: row.get("speaker_id")?,
+                        is_preview: None,
+                        is_typing: None,
+                        persistence_state: None,
+                        retry_count: None,
+                        last_save_attempt: None,
+                        save_error: None,
+                    })
+                },
+            )?;
+            partial_messages.push(message);
+        }
+
+        // Sort by timestamp to merge in chronological order
+        partial_messages.sort_by_key(|m| m.timestamp);
+
+        // Build merged content
+        let merged_content = partial_messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        // Calculate average confidence
+        let avg_confidence = if partial_messages.iter().any(|m| m.confidence.is_some()) {
+            let confidences: Vec<f64> = partial_messages.iter()
+                .filter_map(|m| m.confidence)
+                .collect();
+            if !confidences.is_empty() {
+                Some(confidences.iter().sum::<f64>() / confidences.len() as f64)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Use earliest timestamp and latest audio_level/latency
+        let earliest_msg = &partial_messages[0];
+        let latest_msg = &partial_messages[partial_messages.len() - 1];
+
+        // Create merged_from JSON array
+        let merged_from_json = serde_json::to_string(&partial_message_ids)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+
+        // Generate new ID for merged message
+        let merged_id = Uuid::new_v4().to_string();
+
+        // Create merged message
+        let merged_message = ConversationMessage {
+            id: merged_id.clone(),
+            message_type: earliest_msg.message_type.clone(),
+            source: earliest_msg.source.clone(),
+            content: merged_content,
+            timestamp: earliest_msg.timestamp,
+            confidence: avg_confidence,
+            audio_level: latest_msg.audio_level,
+            processing_latency_ms: latest_msg.processing_latency_ms,
+            model_version: latest_msg.model_version.clone(),
+            is_partial: Some(false), // Mark as complete
+            merged_from: Some(merged_from_json),
+            speaker_id: earliest_msg.speaker_id.clone(),
+            is_preview: None,
+            is_typing: None,
+            persistence_state: None,
+            retry_count: None,
+            last_save_attempt: None,
+            save_error: None,
+        };
+
+        // Save merged message
+        self.save_conversation_message(session_id, merged_message)?;
+
+        // Delete original partial messages
+        for msg_id in &partial_message_ids {
+            self.connection.execute(
+                "DELETE FROM conversation_messages WHERE id = ? AND session_id = ?",
+                params![msg_id, session_id]
+            )?;
+        }
+
+        println!("✅ Merged {} partial messages into {}", partial_message_ids.len(), merged_id);
+        Ok(merged_id)
+    }
+
     pub fn save_conversation_insight(&mut self, session_id: &str, insight: ConversationInsight) -> Result<()> {
         self.connection.execute(
             "INSERT OR REPLACE INTO conversation_insights (id, session_id, text, timestamp, context_length, insight_type)
@@ -593,4 +718,151 @@ fn get_database_path(app_handle: &AppHandle) -> std::result::Result<PathBuf, Str
         .map_err(|e| format!("Failed to get app data directory: {}", e))?;
 
     Ok(app_data_dir.join("enteract_data.db"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn create_test_storage() -> ConversationStorage {
+        let conn = Connection::open_in_memory().unwrap();
+        let mut storage = ConversationStorage { connection: conn };
+        storage.initialize_conversation_tables().unwrap();
+        storage
+    }
+
+    #[test]
+    fn test_merge_partial_messages() {
+        let mut storage = create_test_storage();
+        let session_id = "test-session";
+
+        // Create session
+        storage.connection.execute(
+            "INSERT INTO conversation_sessions (id, name, start_time, is_active) VALUES (?, ?, ?, ?)",
+            params![session_id, "Test Session", 1000, 1]
+        ).unwrap();
+
+        // Create partial messages
+        let partial_ids = vec![
+            "msg-1".to_string(),
+            "msg-2".to_string(),
+            "msg-3".to_string(),
+        ];
+
+        let partial_messages = vec![
+            ConversationMessage {
+                id: "msg-1".to_string(),
+                message_type: "user".to_string(),
+                source: "microphone".to_string(),
+                content: "Hello".to_string(),
+                timestamp: 1000,
+                confidence: Some(0.9),
+                audio_level: Some(0.5),
+                processing_latency_ms: Some(100),
+                model_version: Some("v1".to_string()),
+                is_partial: Some(true),
+                merged_from: None,
+                speaker_id: Some("speaker1".to_string()),
+                is_preview: None,
+                is_typing: None,
+                persistence_state: None,
+                retry_count: None,
+                last_save_attempt: None,
+                save_error: None,
+            },
+            ConversationMessage {
+                id: "msg-2".to_string(),
+                message_type: "user".to_string(),
+                source: "microphone".to_string(),
+                content: "world".to_string(),
+                timestamp: 2000,
+                confidence: Some(0.8),
+                audio_level: Some(0.6),
+                processing_latency_ms: Some(150),
+                model_version: Some("v1".to_string()),
+                is_partial: Some(true),
+                merged_from: None,
+                speaker_id: Some("speaker1".to_string()),
+                is_preview: None,
+                is_typing: None,
+                persistence_state: None,
+                retry_count: None,
+                last_save_attempt: None,
+                save_error: None,
+            },
+            ConversationMessage {
+                id: "msg-3".to_string(),
+                message_type: "user".to_string(),
+                source: "microphone".to_string(),
+                content: "today".to_string(),
+                timestamp: 3000,
+                confidence: Some(0.95),
+                audio_level: Some(0.7),
+                processing_latency_ms: Some(120),
+                model_version: Some("v1".to_string()),
+                is_partial: Some(true),
+                merged_from: None,
+                speaker_id: Some("speaker1".to_string()),
+                is_preview: None,
+                is_typing: None,
+                persistence_state: None,
+                retry_count: None,
+                last_save_attempt: None,
+                save_error: None,
+            },
+        ];
+
+        // Save partial messages
+        for msg in partial_messages {
+            storage.save_conversation_message(session_id, msg).unwrap();
+        }
+
+        // Merge them
+        let merged_id = storage.merge_partial_messages(session_id, partial_ids.clone()).unwrap();
+        assert!(!merged_id.is_empty());
+
+        // Verify merged message exists
+        let merged_msg = storage.connection.query_row(
+            "SELECT content, is_partial, merged_from, confidence
+             FROM conversation_messages WHERE id = ?",
+            params![&merged_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>("content")?,
+                    row.get::<_, Option<i32>>("is_partial")?,
+                    row.get::<_, String>("merged_from")?,
+                    row.get::<_, f64>("confidence")?,
+                ))
+            }
+        ).unwrap();
+
+        // Check merged content
+        assert_eq!(merged_msg.0, "Hello world today");
+
+        // Check is_partial is false
+        assert_eq!(merged_msg.1, Some(0));
+
+        // Check merged_from contains original IDs
+        let merged_from: Vec<String> = serde_json::from_str(&merged_msg.2).unwrap();
+        assert_eq!(merged_from, partial_ids);
+
+        // Check average confidence (0.9 + 0.8 + 0.95) / 3 = 0.8833...
+        assert!((merged_msg.3 - 0.8833).abs() < 0.01);
+
+        // Verify original messages are deleted
+        let count: i32 = storage.connection.query_row(
+            "SELECT COUNT(*) FROM conversation_messages WHERE id IN (?, ?, ?)",
+            params!["msg-1", "msg-2", "msg-3"],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_merge_partial_messages_empty() {
+        let mut storage = create_test_storage();
+        let result = storage.merge_partial_messages("session", vec![]);
+        assert!(result.is_err());
+    }
 }
