@@ -127,10 +127,11 @@ export function useControlPanelEvents(
     }
   }
 
-  // Drag handling (remains the same as it's window-level, not panel-level)
+  // Drag handling - minimal implementation to avoid interfering with Tauri's native drag
+  // The data-tauri-drag-region attribute handles the actual dragging
   const handleDragStart = async (event: Event) => {
-    event.stopPropagation()
-    
+    // DO NOT call event.stopPropagation() or event.preventDefault()
+    // This would prevent Tauri's native drag region from working on macOS
     try {
       console.log('🖱️ Starting window drag')
       // The actual drag implementation would go here
