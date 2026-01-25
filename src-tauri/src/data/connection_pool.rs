@@ -231,7 +231,7 @@ impl ConnectionPool {
     }
 
     fn test_connection(&self, connection: &Connection) -> SqliteResult<()> {
-        connection.execute("SELECT 1", [])?;
+        connection.query_row("SELECT 1", [], |_| Ok(()))?;
         Ok(())
     }
 
