@@ -156,6 +156,7 @@ onUnmounted(() => {
         ref="controlPanelRef"
         class="control-panel-glass-bar"
         :class="{ 'dragging': isDragging }"
+        data-tauri-drag-region
       >
         <!-- Dedicated drag handle area on the left -->
         <div class="drag-handle" data-tauri-drag-region>
@@ -317,11 +318,17 @@ onUnmounted(() => {
   display: block;
 }
 
-/* Spacer to balance layout */
+/* Spacer to balance layout - also draggable */
 .drag-spacer {
   width: 40px;
   height: 100%;
   flex-shrink: 0;
+  -webkit-app-region: drag;
+  cursor: grab;
+}
+
+.drag-spacer:active {
+  cursor: grabbing;
 }
 
 /* Floating animation for the entire bar (disabled when dragging) */
@@ -352,5 +359,13 @@ onUnmounted(() => {
   align-items: center;
 }
 
-/* Removed - drag region now on .drag-handle */
+/* Drag region styling - entire bar is draggable except buttons */
+.control-panel-glass-bar[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+  cursor: grab;
+}
+
+.control-panel-glass-bar[data-tauri-drag-region]:active {
+  cursor: grabbing;
+}
 </style>
