@@ -43,7 +43,6 @@ pdf-extract = "0.7"
 sha2 = "0.10"
 rubato = "0.15"
 hound = "3.5"
-wasapi = "0.13"
 ctrlc = "3.4"
 bytemuck = "1.13"
 dirs = "5.0"
@@ -63,8 +62,9 @@ log = "0.4.21"
 env_logger = { version = "0.10", optional = true }
 regex = "1.10.3"
 
-# Platform-specific dependencies for transparency
+# Platform-specific dependencies
 [target.'cfg(windows)'.dependencies]
+wasapi = "0.13"
 windows = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",

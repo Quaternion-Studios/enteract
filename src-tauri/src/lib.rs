@@ -12,7 +12,7 @@ mod ollama;
 mod screenshot;
 mod file_handler;
 mod data; // Data storage module (JSON, SQLite, migration, hybrid)
-mod audio_loopback; // New audio loopback module
+mod audio_loopback; // Audio loopback module (Windows functional, macOS stubs until Phase 1)
 mod system_prompts; // System prompts module
 mod system_info; // System information module
 mod rag_system; // RAG document system module
@@ -55,7 +55,7 @@ use file_handler::{
 };
 // Data storage imports are now handled above in the SQLite section
 
-// Import new audio loopback commands
+// Import audio loopback commands (Windows functional, macOS stubs until Phase 1)
 use audio_loopback::{
     enumerate_loopback_devices, auto_select_best_device, test_audio_device,
     save_audio_settings, load_audio_settings, save_general_settings, load_general_settings,
