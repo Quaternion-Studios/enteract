@@ -127,33 +127,24 @@ const controlPanelRef = ref<HTMLElement>()
 
 onMounted(async () => {
   document.addEventListener('keydown', handleKeydown)
-  // Removed global click listener - let window registry handle click-outside detection
-  
-  const controlPanel = controlPanelRef.value
-  if (controlPanel) {
-    controlPanel.addEventListener('mousedown', handleDragStart)
-    document.addEventListener('mouseup', handleDragEnd)
-  }
-  
+  // Removed drag event listeners - using Tauri's native drag region
+
   await store.initializeSpeechTranscription('tiny')
-  
+
   await resizeWindow(false, false, false, false, false)
-  
+
   console.log('⌨️ Keyboard Shortcuts:')
   console.log('   Ctrl+Shift+E = Start/Stop ML Eye Tracking + Window Movement')
   console.log('   Ctrl+Shift+S = Emergency Stop (stop all tracking)')
   console.log('   Ctrl+Shift+C = Toggle Chat Window')
-
   console.log('   Ctrl+Shift+A = Toggle AI Models Window')
   console.log('   Escape = Close any open panels')
-  console.log('🎯 Control Panel is draggable - click and drag to move!')
+  console.log('🎯 Control Panel is draggable - use the dots on the left to drag!')
   console.log('📐 Chat Window is resizable - drag the resize handles!')
 })
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleKeydown)
-  // Removed global click listener cleanup - window registry handles its own cleanup
-  document.removeEventListener('mouseup', handleDragEnd)
 })
 </script>
 
@@ -161,12 +152,20 @@ onUnmounted(() => {
   <div class="app-layout">
     <!-- Control Panel Section -->
     <div class="control-panel-section">
-      <div 
+      <div
         ref="controlPanelRef"
-        class="control-panel-glass-bar" 
+        class="control-panel-glass-bar"
         :class="{ 'dragging': isDragging }"
-        data-tauri-drag-region
       >
+        <!-- Dedicated drag handle area on the left -->
+        <div class="drag-handle" data-tauri-drag-region>
+          <div class="drag-dots">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+        </div>
+
         <ControlPanelButtons
           :store="store"
           :mlEyeTracking="mlEyeTracking"
@@ -179,15 +178,9 @@ onUnmounted(() => {
           @toggle-conversational="toggleConversationalWindow"
           @toggle-chat="toggleChatWindow"
         />
-        
-        <!-- Drag indicator -->
-        <div class="drag-indicator" :class="{ 'visible': dragIndicatorVisible }">
-          <div class="drag-dots">
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-        </div>
+
+        <!-- Spacer to balance layout -->
+        <div class="drag-spacer"></div>
       </div>
     </div>
 
@@ -233,13 +226,15 @@ onUnmounted(() => {
 /* Curved Glass Control Panel Bar */
 .control-panel-glass-bar {
   @apply rounded-full overflow-hidden relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   height: 44px;
   width: 320px;
-  cursor: grab;
   user-select: none;
-  
+
   /* Premium curved glass effect with darker background */
-  background: linear-gradient(135deg, 
+  background: linear-gradient(135deg,
     rgba(10, 10, 12, 0.90) 0%,
     rgba(10, 10, 12, 0.80) 25%,
     rgba(10, 10, 12, 0.75) 50%,
@@ -248,12 +243,12 @@ onUnmounted(() => {
   );
   backdrop-filter: blur(40px) saturate(180%) brightness(1.1);
   border: 1px solid rgba(255, 255, 255, 0.3);
-  box-shadow: 
+  box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.25),
     0 2px 8px rgba(0, 0, 0, 0.15),
     inset 0 1px 0 rgba(255, 255, 255, 0.4),
     inset 0 -1px 0 rgba(0, 0, 0, 0.1);
-  
+
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -293,25 +288,40 @@ onUnmounted(() => {
   );
 }
 
-/* Drag indicator */
-.drag-indicator {
-  @apply absolute top-1/2 left-3 transform -translate-y-1/2;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  pointer-events: none;
+/* Drag handle - visible drag area */
+.drag-handle {
+  @apply flex items-center justify-center;
+  width: 40px;
+  height: 100%;
+  cursor: grab;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
 }
 
-.drag-indicator.visible {
-  opacity: 1;
+.drag-handle:active {
+  cursor: grabbing;
 }
 
 .drag-dots {
   @apply flex flex-col gap-1;
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+}
+
+.drag-handle:hover .drag-dots {
+  opacity: 1;
 }
 
 .drag-dots span {
   @apply w-1 h-1 rounded-full bg-white/60;
   display: block;
+}
+
+/* Spacer to balance layout */
+.drag-spacer {
+  width: 40px;
+  height: 100%;
+  flex-shrink: 0;
 }
 
 /* Floating animation for the entire bar (disabled when dragging) */
@@ -342,8 +352,5 @@ onUnmounted(() => {
   align-items: center;
 }
 
-/* Drag region styling */
-.control-panel-glass-bar[data-tauri-drag-region] {
-  -webkit-app-region: drag;
-}
+/* Removed - drag region now on .drag-handle */
 </style>
