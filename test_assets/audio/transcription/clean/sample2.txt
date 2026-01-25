@@ -1,0 +1,1 @@
+The server IP address is 192.168.1.1 and the port number is 8080.

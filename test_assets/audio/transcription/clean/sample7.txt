@@ -1,0 +1,1 @@
+The API endpoint returns JSON responses with proper HTTP status codes and authentication tokens.
