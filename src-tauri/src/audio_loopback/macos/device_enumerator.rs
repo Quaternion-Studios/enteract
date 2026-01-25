@@ -172,13 +172,25 @@ impl CPALDeviceEnumerator {
 /// Returns (major, minor, patch) version tuple.
 /// Used to determine which audio capture API to use.
 pub fn get_macos_version() -> (u32, u32, u32) {
-    // TODO: Implement macOS version detection
-    // For now, assume macOS 14.6+ (CPAL native loopback)
-    //
-    // Implementation options:
-    // 1. Parse /System/Library/CoreServices/SystemVersion.plist
-    // 2. Use sysctl kern.osproductversion
-    // 3. Use Foundation framework (NSProcessInfo)
+    use std::process::Command;
+
+    // Use sw_vers command to get macOS version
+    if let Ok(output) = Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+    {
+        if let Ok(version_str) = String::from_utf8(output.stdout) {
+            let parts: Vec<&str> = version_str.trim().split('.').collect();
+
+            let major = parts.get(0).and_then(|s| s.parse::<u32>().ok()).unwrap_or(14);
+            let minor = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(6);
+            let patch = parts.get(2).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+
+            return (major, minor, patch);
+        }
+    }
+
+    // Fallback: assume modern macOS 14.6+ if detection fails
     (14, 6, 0)
 }
 
