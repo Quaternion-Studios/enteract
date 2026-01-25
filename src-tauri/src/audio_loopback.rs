@@ -53,33 +53,83 @@ pub use types::{
     AudioDeviceSettings,
 };
 
-// macOS implementation (stub commands for now - will be moved to macos/ module)
+// macOS implementation using CPAL (Phase 2: en-03o)
+#[cfg(target_os = "macos")]
+use std::sync::Mutex as StdMutex;
+
+#[cfg(target_os = "macos")]
+lazy_static::lazy_static! {
+    static ref MACOS_CAPTURE_ENGINE: StdMutex<Option<macos::CPALCaptureEngine>> = StdMutex::new(None);
+}
+
 #[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn enumerate_loopback_devices() -> Result<Vec<AudioLoopbackDevice>, String> {
-    Err("Audio loopback not yet implemented for macOS. Phase 1 in progress.".to_string())
+    let enumerator = macos::CPALDeviceEnumerator::new();
+    enumerator
+        .enumerate_loopback_devices()
+        .map_err(|e| format!("Failed to enumerate devices: {}", e))
 }
 
 #[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn auto_select_best_device() -> Result<Option<AudioLoopbackDevice>, String> {
-    Err("Audio loopback not yet implemented for macOS. Phase 1 in progress.".to_string())
+    let enumerator = macos::CPALDeviceEnumerator::new();
+    enumerator
+        .auto_select_best_device()
+        .map_err(|e| format!("Failed to auto-select device: {}", e))
 }
 
 #[cfg(target_os = "macos")]
 #[tauri::command]
-pub async fn test_audio_device(_device_id: String) -> Result<bool, String> {
-    Err("Audio loopback not yet implemented for macOS. Phase 1 in progress.".to_string())
+pub async fn test_audio_device(device_id: String) -> Result<bool, String> {
+    let enumerator = macos::CPALDeviceEnumerator::new();
+    Ok(enumerator.test_device_capability(&device_id))
 }
 
 #[cfg(target_os = "macos")]
 #[tauri::command]
-pub async fn start_audio_loopback_capture(_device_id: String, _app_handle: tauri::AppHandle) -> Result<String, String> {
-    Err("Audio loopback not yet implemented for macOS. Phase 1 in progress.".to_string())
+pub async fn start_audio_loopback_capture(device_id: String, app_handle: tauri::AppHandle) -> Result<String, String> {
+    // Stop existing capture if any (take ownership, release lock before await)
+    let existing = {
+        if let Ok(mut engine) = MACOS_CAPTURE_ENGINE.lock() {
+            engine.take()
+        } else {
+            None
+        }
+    };
+
+    if let Some(mut existing_engine) = existing {
+        let _ = existing_engine.stop().await;
+    }
+
+    // Create and start new capture engine
+    let mut new_engine = macos::CPALCaptureEngine::new(device_id.clone());
+    new_engine.start(app_handle).await?;
+
+    // Store engine
+    if let Ok(mut engine) = MACOS_CAPTURE_ENGINE.lock() {
+        *engine = Some(new_engine);
+    }
+
+    Ok(format!("Started audio loopback capture on device: {}", device_id))
 }
 
 #[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn stop_audio_loopback_capture() -> Result<(), String> {
-    Err("Audio loopback not yet implemented for macOS. Phase 1 in progress.".to_string())
+    // Take ownership, release lock before await
+    let existing = {
+        if let Ok(mut engine) = MACOS_CAPTURE_ENGINE.lock() {
+            engine.take()
+        } else {
+            None
+        }
+    };
+
+    if let Some(mut existing_engine) = existing {
+        existing_engine.stop().await?;
+    }
+
+    Ok(())
 }
