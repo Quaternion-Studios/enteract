@@ -116,6 +116,107 @@ impl ConversationStorage {
         "#)?;
 
         println!("✅ Conversation tables initialized successfully");
+
+        // Migrate existing tables to add new columns if they don't exist
+        self.migrate_conversation_messages_schema()?;
+
+        // Create C1 tables if they don't exist (for databases created before C1)
+        self.migrate_c1_tables()?;
+
+        Ok(())
+    }
+
+    /// Create conversation_state and context_windows tables from C1 schema
+    /// This handles existing databases created before C1 implementation
+    fn migrate_c1_tables(&mut self) -> Result<()> {
+        // Check if conversation_state table exists
+        let state_exists: bool = self.connection.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_state'",
+            [],
+            |row| {
+                let count: i32 = row.get(0)?;
+                Ok(count > 0)
+            }
+        )?;
+
+        if !state_exists {
+            println!("🔧 Creating conversation_state table (C1 migration)");
+            self.connection.execute(r#"
+                CREATE TABLE conversation_state (
+                    session_id TEXT PRIMARY KEY,
+                    state TEXT NOT NULL CHECK(state IN ('idle', 'listening', 'processing', 'responding')),
+                    last_user_speech_at INTEGER,
+                    last_system_speech_at INTEGER,
+                    context_summary TEXT,
+                    topic TEXT,
+                    updated_at INTEGER NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES conversation_sessions(id) ON DELETE CASCADE
+                )
+            "#, params![])?;
+            println!("✅ Created conversation_state table");
+        }
+
+        // Check if context_windows table exists
+        let context_exists: bool = self.connection.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='context_windows'",
+            [],
+            |row| {
+                let count: i32 = row.get(0)?;
+                Ok(count > 0)
+            }
+        )?;
+
+        if !context_exists {
+            println!("🔧 Creating context_windows table (C1 migration)");
+            self.connection.execute(r#"
+                CREATE TABLE context_windows (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    messages_json TEXT NOT NULL,
+                    token_count INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES conversation_sessions(id) ON DELETE CASCADE
+                )
+            "#, params![])?;
+
+            // Add index for performance
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_context_windows_session_created ON context_windows(session_id, created_at DESC)",
+                params![]
+            )?;
+            println!("✅ Created context_windows table");
+        }
+
+        Ok(())
+    }
+
+    /// Migrate conversation_messages table to add new columns from C1 schema
+    /// This handles existing databases created before the schema enhancement
+    fn migrate_conversation_messages_schema(&mut self) -> Result<()> {
+        // Check which columns exist
+        let mut stmt = self.connection.prepare("PRAGMA table_info(conversation_messages)")?;
+        let existing_columns: Vec<String> = stmt.query_map([], |row| {
+            row.get::<_, String>(1) // Column 1 is the name
+        })?.collect::<Result<Vec<_>, _>>()?;
+
+        // Columns to add if missing
+        let required_columns = vec![
+            ("audio_level", "ALTER TABLE conversation_messages ADD COLUMN audio_level REAL"),
+            ("processing_latency_ms", "ALTER TABLE conversation_messages ADD COLUMN processing_latency_ms INTEGER"),
+            ("model_version", "ALTER TABLE conversation_messages ADD COLUMN model_version TEXT"),
+            ("is_partial", "ALTER TABLE conversation_messages ADD COLUMN is_partial INTEGER CHECK(is_partial IN (0, 1))"),
+            ("merged_from", "ALTER TABLE conversation_messages ADD COLUMN merged_from TEXT"),
+            ("speaker_id", "ALTER TABLE conversation_messages ADD COLUMN speaker_id TEXT"),
+        ];
+
+        for (col_name, alter_sql) in required_columns {
+            if !existing_columns.contains(&col_name.to_string()) {
+                println!("🔧 Migrating conversation_messages: adding column {}", col_name);
+                self.connection.execute(alter_sql, params![])?;
+                println!("✅ Added column: {}", col_name);
+            }
+        }
+
         Ok(())
     }
 
@@ -864,5 +965,112 @@ mod tests {
         let mut storage = create_test_storage();
         let result = storage.merge_partial_messages("session", vec![]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_schema_migration() {
+        // Create a database with OLD schema (no C1 columns)
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Create old schema (conversation_messages without new columns)
+        conn.execute_batch(r#"
+            CREATE TABLE conversation_sessions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                start_time INTEGER NOT NULL,
+                end_time INTEGER,
+                is_active INTEGER NOT NULL
+            );
+
+            CREATE TABLE conversation_messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                confidence REAL,
+                FOREIGN KEY (session_id) REFERENCES conversation_sessions(id)
+            );
+        "#).unwrap();
+
+        // Verify old schema (should have 7 columns only)
+        let old_columns: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(conversation_messages)").unwrap();
+            stmt.query_map([], |row| {
+                row.get::<_, String>(1)
+            }).unwrap().collect::<Result<Vec<_>, _>>().unwrap()
+        };
+
+        assert_eq!(old_columns.len(), 7);
+        assert!(!old_columns.contains(&"audio_level".to_string()));
+
+        // Now run migration
+        let mut storage = ConversationStorage { connection: conn };
+        storage.migrate_conversation_messages_schema().unwrap();
+
+        // Verify new columns were added
+        let mut stmt = storage.connection.prepare("PRAGMA table_info(conversation_messages)").unwrap();
+        let new_columns: Vec<String> = stmt.query_map([], |row| {
+            row.get::<_, String>(1)
+        }).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+
+        assert_eq!(new_columns.len(), 13); // 7 old + 6 new = 13
+        assert!(new_columns.contains(&"audio_level".to_string()));
+        assert!(new_columns.contains(&"processing_latency_ms".to_string()));
+        assert!(new_columns.contains(&"model_version".to_string()));
+        assert!(new_columns.contains(&"is_partial".to_string()));
+        assert!(new_columns.contains(&"merged_from".to_string()));
+        assert!(new_columns.contains(&"speaker_id".to_string()));
+    }
+
+    #[test]
+    fn test_c1_tables_migration() {
+        // Create database without C1 tables
+        let conn = Connection::open_in_memory().unwrap();
+
+        conn.execute_batch(r#"
+            CREATE TABLE conversation_sessions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                start_time INTEGER NOT NULL,
+                end_time INTEGER,
+                is_active INTEGER NOT NULL
+            );
+        "#).unwrap();
+
+        // Verify C1 tables don't exist
+        let state_exists: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_state'",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(state_exists, 0);
+
+        let context_exists: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='context_windows'",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(context_exists, 0);
+
+        // Run migration
+        let mut storage = ConversationStorage { connection: conn };
+        storage.migrate_c1_tables().unwrap();
+
+        // Verify C1 tables now exist
+        let state_exists: i32 = storage.connection.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_state'",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(state_exists, 1);
+
+        let context_exists: i32 = storage.connection.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='context_windows'",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(context_exists, 1);
     }
 }
