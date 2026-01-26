@@ -26,48 +26,65 @@ const INTERACTIVE_SELECTORS = [
   '[role="menuitem"]',
   '[onclick]',
   '.control-panel',
+  '.control-panel-glass-bar',
+  '.control-panel-section',
   '.chat-sidebar',
   '.drawer',
   '.modal',
   '.menu',
   '.dropdown',
   '.card',
+  '.app-layout',
   '[class*="panel"]',
   '[class*="sidebar"]',
   '[class*="control"]',
+  '[class*="window"]',
+  '[data-tauri-drag-region]',
   '[draggable="true"]'
 ].join(', ')
 
 export function useTransparentClickthrough() {
   let isOverInteractiveElement = false
   let mouseMoveThrottleTimer: number | null = null
+  let lastElement: Element | null = null
 
   const handleMouseMove = async (event: MouseEvent) => {
-    // Throttle checks to avoid excessive Tauri calls (every 50ms max)
+    // Throttle checks to avoid excessive Tauri calls (every 16ms = ~60fps)
     if (mouseMoveThrottleTimer !== null) {
       return
     }
 
     mouseMoveThrottleTimer = window.setTimeout(() => {
       mouseMoveThrottleTimer = null
-    }, 50)
+    }, 16)
 
     // Get element at cursor position
     const element = document.elementFromPoint(event.clientX, event.clientY)
 
     if (!element) {
       // No element found - enable passthrough
-      if (!isOverInteractiveElement) {
-        return // Already in passthrough mode
+      if (isOverInteractiveElement) {
+        isOverInteractiveElement = false
+        await setMousePassthrough(true)
       }
-      isOverInteractiveElement = false
-      await setMousePassthrough(true)
       return
     }
 
+    // If hovering over html or body only, that means transparent background
+    const tagName = element.tagName.toLowerCase()
+    const isTransparentArea = tagName === 'html' || tagName === 'body'
+
     // Check if element or any parent is interactive
-    const isInteractive = element.matches(INTERACTIVE_SELECTORS) ||
-                         element.closest(INTERACTIVE_SELECTORS) !== null
+    const isInteractive = !isTransparentArea && (
+      element.matches(INTERACTIVE_SELECTORS) ||
+      element.closest(INTERACTIVE_SELECTORS) !== null
+    )
+
+    // Debug logging when element changes
+    if (element !== lastElement) {
+      console.log(`🎯 Element under cursor: <${tagName}> class="${element.className}" interactive=${isInteractive}`)
+      lastElement = element
+    }
 
     // Only update if state changed (avoid redundant calls)
     if (isInteractive !== isOverInteractiveElement) {
