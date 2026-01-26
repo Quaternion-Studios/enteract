@@ -76,6 +76,17 @@ export const createMockConversationStore = () => ({
   createSession: vi.fn(),
   endSession: vi.fn(),
   setAudioLoopbackState: vi.fn(),
+  getMessagePersistenceStatus: vi.fn(() => ({
+    pendingCount: 0,
+    failedCount: 0,
+    isSaving: false,
+    isOnline: true,
+    stats: {
+      totalSaved: 0,
+      totalFailed: 0,
+      lastSaveTime: null
+    }
+  })),
 })
 
 export const createMockWindowRegistry = () => ({
