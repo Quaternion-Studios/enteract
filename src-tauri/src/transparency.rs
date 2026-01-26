@@ -52,10 +52,11 @@ pub async fn set_window_transparency(window: Window, alpha: f64) -> Result<(), S
             unsafe {
                 let _: () = msg_send![ns_window, setAlphaValue: clamped_alpha];
 
-                // Enable click-through whenever window has any transparency
-                // UI elements with pointer-events:auto in CSS will still be interactive
-                let ignore_mouse = clamped_alpha < 1.0;
-                let _: () = msg_send![ns_window, setIgnoresMouseEvents: ignore_mouse];
+                // DON'T use setIgnoresMouseEvents - it makes the ENTIRE window non-interactive
+                // Instead, click-through is handled via CSS:
+                //   - body/app have pointer-events:none (clicks pass through)
+                //   - interactive elements have pointer-events:auto (remain clickable)
+                // This gives us proper click-through on transparent areas while keeping UI interactive
             }
         }
     }

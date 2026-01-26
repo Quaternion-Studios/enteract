@@ -12,6 +12,7 @@ html, body {
   width: auto !important;
   overflow: hidden !important;
   background: transparent !important;
+  pointer-events: none !important; /* Allow clicks to pass through transparent areas */
 }
 
 #app {
@@ -20,6 +21,24 @@ html, body {
   height: auto !important;
   width: auto !important;
   background: transparent !important;
+  pointer-events: none !important; /* Allow clicks to pass through transparent areas */
+}
+
+/* Make all containers non-interactive by default for click-through */
+.app-root, [class*="container"], [class*="wrapper"], div {
+  pointer-events: none;
+}
+
+/* All interactive elements need pointer-events: auto to remain clickable */
+button, input, select, textarea, a, [role="button"], [onclick],
+[class*="panel"], [class*="drawer"], [class*="sidebar"], [class*="modal"],
+[class*="menu"], [class*="dropdown"], [class*="card"], [class*="control"] {
+  pointer-events: auto !important;
+}
+
+/* Ensure all component root elements are interactive */
+[data-v-app] > *, .control-panel, .chat-sidebar {
+  pointer-events: auto !important;
 }
 
 @tailwind base;
