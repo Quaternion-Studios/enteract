@@ -82,27 +82,27 @@ impl CPALDeviceEnumerator {
     /// Classify device type and determine loopback method
     ///
     /// macOS device classification:
-    /// - Native loopback devices (macOS 14.6+ via CPAL)
-    /// - Virtual devices (BlackHole, Loopback, SoundFlower)
-    /// - ScreenCaptureKit devices
+    /// - Virtual loopback devices (BlackHole, Loopback, SoundFlower) → Render (system audio)
+    /// - Regular microphones → Capture (user input)
+    /// - ScreenCaptureKit devices → Render (system audio)
     fn classify_device(&self, name: &str) -> (DeviceType, LoopbackMethod) {
         let name_lower = name.to_lowercase();
 
-        // Detect virtual audio devices
+        // Detect virtual audio loopback devices (capture system audio)
         if name_lower.contains("blackhole")
             || name_lower.contains("soundflower")
             || name_lower.contains("loopback")
         {
-            return (DeviceType::Capture, LoopbackMethod::VirtualDevice);
+            return (DeviceType::Render, LoopbackMethod::VirtualDevice);
         }
 
-        // Detect ScreenCaptureKit devices (if present)
+        // Detect ScreenCaptureKit devices (capture system audio)
         if name_lower.contains("screencapturekit") || name_lower.contains("screen capture") {
-            return (DeviceType::Capture, LoopbackMethod::ScreenCaptureKit);
+            return (DeviceType::Render, LoopbackMethod::ScreenCaptureKit);
         }
 
-        // Default: assume CoreAudio Tap or CPAL native loopback
-        // On macOS 14.6+, CPAL uses CoreAudio Taps under the hood
+        // Default: regular microphone (user input)
+        // Built-in Microphone, External Microphone, etc.
         (DeviceType::Capture, LoopbackMethod::CoreAudioTap)
     }
 

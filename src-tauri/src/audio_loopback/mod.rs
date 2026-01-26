@@ -104,8 +104,17 @@ pub async fn start_audio_loopback_capture(device_id: String, app_handle: tauri::
     }
 
     // Create and start new capture engine
-    // This function is for loopback (system audio), so device type is Render
-    let mut new_engine = macos::CPALCaptureEngine::new(device_id.clone(), types::DeviceType::Render);
+    // Determine device type by enumerating devices
+    let enumerator = macos::CPALDeviceEnumerator::new();
+    let devices = enumerator.enumerate_loopback_devices()
+        .map_err(|e| format!("Failed to enumerate devices: {}", e))?;
+
+    let device_type = devices.iter()
+        .find(|d| d.id == device_id)
+        .map(|d| d.device_type.clone())
+        .unwrap_or(types::DeviceType::Capture); // Default to Capture if not found
+
+    let mut new_engine = macos::CPALCaptureEngine::new(device_id.clone(), device_type);
     new_engine.start(app_handle).await?;
 
     // Store engine
