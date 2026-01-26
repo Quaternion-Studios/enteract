@@ -4,7 +4,8 @@
  * Enables click-through on transparent window areas while keeping UI interactive.
  *
  * Strategy:
- * - Tracks mouse position globally
+ * - Uses Rust backend to poll global mouse position (works even when window ignores events)
+ * - Receives mouse position events from backend via Tauri event system
  * - Detects if cursor is over an interactive element
  * - Toggles window's setIgnoresMouseEvents based on cursor location:
  *   * Over interactive element → window captures clicks (passthrough OFF)
@@ -13,6 +14,7 @@
 
 import { onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, UnlistenFn } from '@tauri-apps/api/event'
 
 // Selectors for interactive elements that should capture mouse events
 const INTERACTIVE_SELECTORS = [
@@ -45,21 +47,23 @@ const INTERACTIVE_SELECTORS = [
 
 export function useTransparentClickthrough() {
   let isOverInteractiveElement = false
-  let mouseMoveThrottleTimer: number | null = null
   let lastElement: Element | null = null
+  let unlistenFn: UnlistenFn | null = null
 
-  const handleMouseMove = async (event: MouseEvent) => {
-    // Throttle checks to avoid excessive Tauri calls (every 16ms = ~60fps)
-    if (mouseMoveThrottleTimer !== null) {
+  const handleMousePosition = async (event: any) => {
+    const { x, y, isOverWindow } = event.payload
+
+    if (!isOverWindow) {
+      // Mouse is outside window - enable passthrough
+      if (isOverInteractiveElement) {
+        isOverInteractiveElement = false
+        await setMousePassthrough(true)
+      }
       return
     }
 
-    mouseMoveThrottleTimer = window.setTimeout(() => {
-      mouseMoveThrottleTimer = null
-    }, 16)
-
-    // Get element at cursor position
-    const element = document.elementFromPoint(event.clientX, event.clientY)
+    // Get element at cursor position (coordinates from Rust are already in web/DOM coordinates)
+    const element = document.elementFromPoint(x, y)
 
     if (!element) {
       // No element found - enable passthrough
@@ -103,21 +107,34 @@ export function useTransparentClickthrough() {
     }
   }
 
-  const initialize = () => {
+  const initialize = async () => {
     // Start with passthrough enabled (clicks pass through by default)
-    setMousePassthrough(true)
+    await setMousePassthrough(true)
 
-    // Add global mouse move listener
-    document.addEventListener('mousemove', handleMouseMove, { passive: true })
+    // Listen for mouse position events from Rust backend
+    unlistenFn = await listen('mouse-position', handleMousePosition)
 
-    console.log('✅ Transparent click-through initialized')
+    // Start the Rust mouse tracking thread
+    try {
+      await invoke('start_mouse_tracking')
+      console.log('✅ Transparent click-through initialized with global mouse tracking')
+    } catch (error) {
+      console.error('Failed to start mouse tracking:', error)
+    }
   }
 
-  const cleanup = () => {
-    document.removeEventListener('mousemove', handleMouseMove)
+  const cleanup = async () => {
+    // Stop listening to events
+    if (unlistenFn) {
+      unlistenFn()
+      unlistenFn = null
+    }
 
-    if (mouseMoveThrottleTimer !== null) {
-      clearTimeout(mouseMoveThrottleTimer)
+    // Stop the Rust tracking thread
+    try {
+      await invoke('stop_mouse_tracking')
+    } catch (error) {
+      console.error('Failed to stop mouse tracking:', error)
     }
 
     console.log('🧹 Transparent click-through cleaned up')

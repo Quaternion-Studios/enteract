@@ -1,4 +1,6 @@
 use tauri::Window;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(target_os = "macos")]
 use objc::runtime::{Class, Object, Sel};
@@ -139,4 +141,107 @@ pub fn set_mouse_passthrough(window: Window, passthrough: bool) -> Result<(), St
     }
 
     Ok(())
-} 
+}
+
+/// Get global mouse position (screen coordinates)
+#[cfg(target_os = "macos")]
+fn get_global_mouse_position() -> (f64, f64) {
+    unsafe {
+        let ns_event_class = class!(NSEvent);
+        let mouse_location: cocoa::foundation::NSPoint = msg_send![ns_event_class, mouseLocation];
+        (mouse_location.x, mouse_location.y)
+    }
+}
+
+/// Convert global screen coordinates to window-relative coordinates
+#[cfg(target_os = "macos")]
+fn global_to_window_coords(window: &Window, global_x: f64, global_y: f64) -> Option<(f64, f64)> {
+    unsafe {
+        if let Ok(ns_window) = window.ns_window() {
+            let ns_window = ns_window as *mut Object;
+
+            // Get window frame in screen coordinates
+            let window_frame: cocoa::foundation::NSRect = msg_send![ns_window, frame];
+
+            // Convert to window coordinates (origin at bottom-left)
+            let window_x = global_x - window_frame.origin.x;
+            let window_y = global_y - window_frame.origin.y;
+
+            // Check if point is within window bounds
+            if window_x >= 0.0 && window_x <= window_frame.size.width &&
+               window_y >= 0.0 && window_y <= window_frame.size.height {
+                // Convert from bottom-left origin to top-left origin (web coordinates)
+                let web_y = window_frame.size.height - window_y;
+                return Some((window_x, web_y));
+            }
+        }
+    }
+    None
+}
+
+/// Start global mouse position tracking
+/// This polls mouse position even when window has setIgnoresMouseEvents:YES
+#[tauri::command]
+pub fn start_mouse_tracking(window: Window) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::thread;
+        use std::time::Duration;
+        use tauri::Emitter;
+
+        thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_millis(16)); // ~60fps
+
+                let (global_x, global_y) = get_global_mouse_position();
+
+                if let Some((window_x, window_y)) = global_to_window_coords(&window, global_x, global_y) {
+                    // Mouse is over our window - emit event to frontend
+                    #[derive(Clone, serde::Serialize)]
+                    struct MousePosition {
+                        x: f64,
+                        y: f64,
+                        #[serde(rename = "isOverWindow")]
+                        is_over_window: bool,
+                    }
+
+                    let _ = window.emit("mouse-position", MousePosition {
+                        x: window_x,
+                        y: window_y,
+                        is_over_window: true,
+                    });
+                } else {
+                    // Mouse is outside window
+                    #[derive(Clone, serde::Serialize)]
+                    struct MousePosition {
+                        #[serde(rename = "isOverWindow")]
+                        is_over_window: bool,
+                        x: f64,
+                        y: f64,
+                    }
+
+                    let _ = window.emit("mouse-position", MousePosition {
+                        is_over_window: false,
+                        x: 0.0,
+                        y: 0.0,
+                    });
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Mouse tracking only supported on macOS".to_string())
+    }
+}
+
+/// Stop global mouse position tracking
+#[tauri::command]
+pub fn stop_mouse_tracking() -> Result<(), String> {
+    // TODO: Implement tracking thread management with Arc<AtomicBool>
+    // For now, this is a placeholder
+    Ok(())
+}

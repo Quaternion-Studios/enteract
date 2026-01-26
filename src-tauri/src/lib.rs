@@ -25,7 +25,7 @@ mod enhanced_rag_commands; // Enhanced RAG command handlers
 mod mcp; // MCP module for multi-command processing
 
 // Re-export the commands from modules
-use transparency::{set_window_transparency, emergency_restore_window, toggle_transparency, set_mouse_passthrough};
+use transparency::{set_window_transparency, emergency_restore_window, toggle_transparency, set_mouse_passthrough, start_mouse_tracking, stop_mouse_tracking};
 use window_manager::{
     move_window_to_position, get_window_position, get_window_size, get_screen_size,
     get_virtual_desktop_size, get_monitor_layout, set_window_bounds
@@ -225,6 +225,8 @@ pub fn run() {
             emergency_restore_window,
             toggle_transparency,
             set_mouse_passthrough,
+            start_mouse_tracking,
+            stop_mouse_tracking,
             move_window_to_position,
             get_window_position,
             get_window_size,
