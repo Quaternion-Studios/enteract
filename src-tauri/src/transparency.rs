@@ -8,7 +8,7 @@ use objc::{class, msg_send, sel, sel_impl};
 use std::ffi::c_void;
 
 #[tauri::command]
-pub async fn set_window_transparency(window: Window, alpha: f64) -> Result<(), String> {
+pub fn set_window_transparency(window: Window, alpha: f64) -> Result<(), String> {
     // Clamp alpha between 0.0 and 1.0
     let clamped_alpha = alpha.clamp(0.0, 1.0);
     
@@ -80,22 +80,22 @@ pub async fn set_window_transparency(window: Window, alpha: f64) -> Result<(), S
 }
 
 #[tauri::command]
-pub async fn emergency_restore_window(window: Window) -> Result<(), String> {
+pub fn emergency_restore_window(window: Window) -> Result<(), String> {
     // Always restore to fully opaque and interactive
-    set_window_transparency(window.clone(), 1.0).await?;
-    
+    set_window_transparency(window.clone(), 1.0)?;
+
     // Ensure window is visible and on top
     window.set_always_on_top(true).map_err(|e| e.to_string())?;
     window.unminimize().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
-    
+
     Ok(())
 }
 
 #[tauri::command]
-pub async fn toggle_transparency(window: Window, current_alpha: f64) -> Result<f64, String> {
+pub fn toggle_transparency(window: Window, current_alpha: f64) -> Result<f64, String> {
     let new_alpha = if current_alpha > 0.5 { 0.3 } else { 1.0 };
-    set_window_transparency(window, new_alpha).await?;
+    set_window_transparency(window, new_alpha)?;
     Ok(new_alpha)
 }
 
@@ -103,7 +103,7 @@ pub async fn toggle_transparency(window: Window, current_alpha: f64) -> Result<f
 /// When enabled (true), clicks on transparent areas pass through to windows behind
 /// When disabled (false), window captures all mouse events
 #[tauri::command]
-pub async fn set_mouse_passthrough(window: Window, passthrough: bool) -> Result<(), String> {
+pub fn set_mouse_passthrough(window: Window, passthrough: bool) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         if let Ok(ns_window) = window.ns_window() {
