@@ -81,7 +81,7 @@ pub async fn process_audio_for_transcription(
         Err(_) => "large".to_string() // Error loading settings, use default
     };
     
-    // println!("[AUDIO_PROCESSOR] Using Whisper model: {}", model_size); // Commented out: Audio loopback is working, reducing console noise for debugging focus
+    println!("[AUDIO_PROCESSOR] Using Whisper model: {}", model_size);
     
     let config = crate::speech::WhisperModelConfig {
         modelSize: model_size,
