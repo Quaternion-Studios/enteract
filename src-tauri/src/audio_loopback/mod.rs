@@ -104,7 +104,8 @@ pub async fn start_audio_loopback_capture(device_id: String, app_handle: tauri::
     }
 
     // Create and start new capture engine
-    let mut new_engine = macos::CPALCaptureEngine::new(device_id.clone());
+    // This function is for loopback (system audio), so device type is Render
+    let mut new_engine = macos::CPALCaptureEngine::new(device_id.clone(), types::DeviceType::Render);
     new_engine.start(app_handle).await?;
 
     // Store engine

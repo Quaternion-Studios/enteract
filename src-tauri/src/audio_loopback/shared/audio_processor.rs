@@ -6,13 +6,15 @@ use base64::prelude::*;
 use serde_json;
 use std::fs::OpenOptions;
 use std::io::Write;
+use crate::audio_loopback::types::DeviceType;
 
 // Audio processing for transcription with improved quality filtering
 #[tauri::command]
 pub async fn process_audio_for_transcription(
     audio_data: Vec<u8>,
     sample_rate: u32,
-    app_handle: AppHandle
+    app_handle: AppHandle,
+    device_type: DeviceType,
 ) -> Result<String, String> {
     // First process the audio through our pipeline to match Python's fast_audio_process
     // println!("[PROCESS] Input: {} bytes, {} Hz", audio_data.len(), sample_rate); // Commented out: Audio loopback is working, reducing console noise for debugging focus
@@ -110,10 +112,17 @@ pub async fn process_audio_for_transcription(
                 log_transcription_debug(&format!("[MAIN SUCCESS] {} (conf: {:.3})", cleaned_text, estimated_confidence), rms, db_level);
                 
                 // Emit transcription event to frontend
+                // Map device type to source and message type
+                let (source, message_type) = match device_type {
+                    DeviceType::Render => ("loopback", "system"),  // System audio
+                    DeviceType::Capture => ("microphone", "user"),  // User microphone
+                };
+
                 let _emit_result = app_handle.emit("loopback-transcription", serde_json::json!({
                     "text": cleaned_text,
                     "timestamp": chrono::Utc::now().timestamp_millis(),
-                    "source": "loopback",
+                    "source": source,
+                    "messageType": message_type,
                     "confidence": estimated_confidence,
                     "audioLevel": db_level
                 }));

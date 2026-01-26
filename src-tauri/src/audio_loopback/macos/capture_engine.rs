@@ -5,6 +5,7 @@
 // References: Jack's research (resources/MACOS_AUDIO_LOOPBACK_RESEARCH.md)
 
 use crate::audio_loopback::shared::audio_processor::process_audio_for_transcription;
+use crate::audio_loopback::types::DeviceType;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 
@@ -45,16 +46,18 @@ impl SimpleBuffer {
 /// macOS audio capture engine using CPAL
 pub struct CPALCaptureEngine {
     device_id: String,
+    device_type: DeviceType,
     is_capturing: bool,
     stream: Option<cpal::Stream>,
     buffer: Arc<Mutex<SimpleBuffer>>,
 }
 
 impl CPALCaptureEngine {
-    pub fn new(device_id: String) -> Self {
+    pub fn new(device_id: String, device_type: DeviceType) -> Self {
         const TARGET_SAMPLE_RATE: u32 = 16000;
         Self {
             device_id,
+            device_type,
             is_capturing: false,
             stream: None,
             buffer: Arc::new(Mutex::new(SimpleBuffer::new(TARGET_SAMPLE_RATE))),
@@ -85,20 +88,23 @@ impl CPALCaptureEngine {
         // Clone buffer for callback
         let buffer = Arc::clone(&self.buffer);
         let app_handle_clone = app_handle.clone();
+        let device_type = self.device_type.clone();
 
         // Build input stream based on sample format
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => {
+                let device_type_f32 = device_type.clone();
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        Self::process_audio_callback(data, &buffer, &app_handle_clone);
+                        Self::process_audio_callback(data, &buffer, &app_handle_clone, &device_type_f32);
                     },
                     |err| eprintln!("[CPAL] Stream error: {}", err),
                     None,
                 )
             }
             cpal::SampleFormat::I16 => {
+                let device_type_i16 = device_type.clone();
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
@@ -107,13 +113,14 @@ impl CPALCaptureEngine {
                             .iter()
                             .map(|&sample| sample as f32 / i16::MAX as f32)
                             .collect();
-                        Self::process_audio_callback(&f32_data, &buffer, &app_handle_clone);
+                        Self::process_audio_callback(&f32_data, &buffer, &app_handle_clone, &device_type_i16);
                     },
                     |err| eprintln!("[CPAL] Stream error: {}", err),
                     None,
                 )
             }
             cpal::SampleFormat::U16 => {
+                let device_type_u16 = device_type;
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
@@ -124,7 +131,7 @@ impl CPALCaptureEngine {
                                 (sample as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)
                             })
                             .collect();
-                        Self::process_audio_callback(&f32_data, &buffer, &app_handle_clone);
+                        Self::process_audio_callback(&f32_data, &buffer, &app_handle_clone, &device_type_u16);
                     },
                     |err| eprintln!("[CPAL] Stream error: {}", err),
                     None,
@@ -178,6 +185,7 @@ impl CPALCaptureEngine {
         data: &[f32],
         buffer: &Arc<Mutex<SimpleBuffer>>,
         app_handle: &tauri::AppHandle,
+        device_type: &DeviceType,
     ) {
         const TARGET_SAMPLE_RATE: u32 = 16000;
 
@@ -190,6 +198,7 @@ impl CPALCaptureEngine {
 
                 // Process in background (don't block audio thread)
                 let app_handle_clone = app_handle.clone();
+                let device_type_clone = device_type.clone();
                 std::thread::spawn(move || {
                     // Convert f32 samples to PCM16 bytes (what process_audio_for_transcription expects)
                     let pcm_bytes: Vec<u8> = chunk
@@ -207,6 +216,7 @@ impl CPALCaptureEngine {
                             pcm_bytes,
                             TARGET_SAMPLE_RATE,
                             app_handle_clone,
+                            device_type_clone,
                         )
                         .await
                         {
@@ -251,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_engine_creation() {
-        let engine = CPALCaptureEngine::new("test_device".to_string());
+        let engine = CPALCaptureEngine::new("test_device".to_string(), DeviceType::Render);
         assert!(!engine.is_capturing());
         assert_eq!(engine.device_id, "test_device");
     }
