@@ -69,7 +69,7 @@ pub async fn process_audio_for_transcription(
                 if let Some(model_str) = model.as_str() {
                     model_str.to_string()
                 } else {
-                    "small".to_string() // Default for loopback - same as microphone
+                    "base".to_string() // Default for loopback - upgraded from small for better quality
                 }
             } else {
                 "small".to_string() // Default for loopback - same as microphone
