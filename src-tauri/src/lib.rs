@@ -129,8 +129,23 @@ pub fn run() {
                 // For now, we'll rely on window-level keyboard shortcuts
             }
             
+            // Initialize Whisper with large model at startup
+            tauri::async_runtime::spawn(async {
+                let config = crate::speech::WhisperModelConfig {
+                    modelSize: "large".to_string(),
+                    language: Some("en".to_string()),
+                    enableVad: true,
+                    silenceThreshold: 0.01,
+                    maxSegmentLength: 30,
+                };
+                match crate::speech::initialize_whisper_model(config).await {
+                    Ok(msg) => println!("✅ {}", msg),
+                    Err(e) => eprintln!("❌ Whisper init failed: {}", e),
+                }
+            });
+
             // Audio loopback functionality is initialized on-demand
-            
+
             // Enhanced RAG system will be initialized on-demand from frontend
             
             // Keep legacy RAG system for compatibility
