@@ -71,14 +71,14 @@ pub async fn process_audio_for_transcription(
                 if let Some(model_str) = model.as_str() {
                     model_str.to_string()
                 } else {
-                    "large".to_string() // Default for loopback - maximum quality
+                    "large-v3".to_string() // Default for loopback - maximum quality
                 }
             } else {
-                "large".to_string() // Default for loopback - maximum quality
+                "large-v3".to_string() // Default for loopback - maximum quality
             }
         }
-        Ok(None) => "large".to_string(), // No settings found, use default
-        Err(_) => "large".to_string() // Error loading settings, use default
+        Ok(None) => "large-v3".to_string(), // No settings found, use default
+        Err(_) => "large-v3".to_string() // Error loading settings, use default
     };
     
     println!("[AUDIO_PROCESSOR] Using Whisper model: {}", model_size);

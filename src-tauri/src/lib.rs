@@ -129,10 +129,10 @@ pub fn run() {
                 // For now, we'll rely on window-level keyboard shortcuts
             }
             
-            // Initialize Whisper with large model at startup
+            // Initialize Whisper with large-v3 model at startup
             tauri::async_runtime::spawn(async {
                 let config = crate::speech::WhisperModelConfig {
-                    modelSize: "large".to_string(),
+                    modelSize: "large-v3".to_string(),
                     language: Some("en".to_string()),
                     enableVad: true,
                     silenceThreshold: 0.01,
