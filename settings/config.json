@@ -1,0 +1,23 @@
+{
+  "type": "town-settings",
+  "version": 1,
+  "default_agent": "claude",
+  "agents": {
+    "claude": {
+      "command": "claude",
+      "args": [
+        "--model",
+        "sonnet",
+        "--dangerously-skip-permissions"
+      ]
+    },
+    "mayor-opus": {
+      "command": "claude",
+      "args": [
+        "--model",
+        "opus",
+        "--dangerously-skip-permissions"
+      ]
+    }
+  }
+}

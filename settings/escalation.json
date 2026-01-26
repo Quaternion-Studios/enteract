@@ -1,0 +1,27 @@
+{
+  "type": "escalation",
+  "version": 1,
+  "routes": {
+    "critical": [
+      "bead",
+      "mail:mayor",
+      "email:human",
+      "sms:human"
+    ],
+    "high": [
+      "bead",
+      "mail:mayor",
+      "email:human"
+    ],
+    "low": [
+      "bead"
+    ],
+    "medium": [
+      "bead",
+      "mail:mayor"
+    ]
+  },
+  "contacts": {},
+  "stale_threshold": "4h",
+  "max_reescalations": 2
+}

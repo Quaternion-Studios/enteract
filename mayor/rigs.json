@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "rigs": {
+    "enteract": {
+      "git_url": "https://github.com/Quaternion-Studios/enteract",
+      "added_at": "2026-01-24T23:51:47.533964-08:00",
+      "beads": {
+        "repo": "",
+        "prefix": "en"
+      }
+    }
+  }
+}
