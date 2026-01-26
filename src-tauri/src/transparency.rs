@@ -1,5 +1,12 @@
 use tauri::Window;
 
+#[cfg(target_os = "macos")]
+use objc::runtime::{Class, Object, Sel};
+#[cfg(target_os = "macos")]
+use objc::{class, msg_send, sel, sel_impl};
+#[cfg(target_os = "macos")]
+use std::ffi::c_void;
+
 #[tauri::command]
 pub async fn set_window_transparency(window: Window, alpha: f64) -> Result<(), String> {
     // Clamp alpha between 0.0 and 1.0
@@ -44,19 +51,14 @@ pub async fn set_window_transparency(window: Window, alpha: f64) -> Result<(), S
     
     #[cfg(target_os = "macos")]
     {
-        use objc::runtime::{Object, Sel};
-        use objc::{msg_send, sel, sel_impl};
-
         if let Ok(ns_window) = window.ns_window() {
             let ns_window = ns_window as *mut Object;
             unsafe {
+                // Set window opacity
                 let _: () = msg_send![ns_window, setAlphaValue: clamped_alpha];
 
-                // DON'T use setIgnoresMouseEvents - it makes the ENTIRE window non-interactive
-                // Instead, click-through is handled via CSS:
-                //   - body/app have pointer-events:none (clicks pass through)
-                //   - interactive elements have pointer-events:auto (remain clickable)
-                // This gives us proper click-through on transparent areas while keeping UI interactive
+                // Don't set ignoresMouseEvents here - it will be toggled dynamically
+                // by set_mouse_passthrough based on cursor position
             }
         }
     }
@@ -95,4 +97,46 @@ pub async fn toggle_transparency(window: Window, current_alpha: f64) -> Result<f
     let new_alpha = if current_alpha > 0.5 { 0.3 } else { 1.0 };
     set_window_transparency(window, new_alpha).await?;
     Ok(new_alpha)
+}
+
+/// Enable or disable mouse event passthrough
+/// When enabled (true), clicks on transparent areas pass through to windows behind
+/// When disabled (false), window captures all mouse events
+#[tauri::command]
+pub async fn set_mouse_passthrough(window: Window, passthrough: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(ns_window) = window.ns_window() {
+            let ns_window = ns_window as *mut Object;
+            unsafe {
+                let _: () = msg_send![ns_window, setIgnoresMouseEvents: passthrough];
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TRANSPARENT
+        };
+
+        if let Ok(hwnd) = window.hwnd() {
+            let hwnd = HWND(hwnd.0 as isize);
+
+            unsafe {
+                let mut ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+
+                if passthrough {
+                    ex_style |= WS_EX_TRANSPARENT.0 as isize;
+                } else {
+                    ex_style &= !(WS_EX_TRANSPARENT.0 as isize);
+                }
+
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style);
+            }
+        }
+    }
+
+    Ok(())
 } 

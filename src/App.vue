@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useWindowManager } from './composables/useWindowManager'
 import { useAIModels } from './composables/useAIModels'
+import { useTransparentClickthrough } from './composables/useTransparentClickthrough'
 import ControlPanel from './components/core/ControlPanel.vue'
 import ChatSidebarAdapter from './components/core/ChatSidebarAdapter.vue'
 
@@ -10,6 +11,9 @@ const { initializeWindow } = useWindowManager()
 
 // AI Models management for chat sidebar
 const { selectedModel } = useAIModels()
+
+// Enable transparent click-through
+const { initialize: initClickthrough } = useTransparentClickthrough()
 
 // Chat drawer state
 const isChatDrawerOpen = ref(false)
