@@ -71,14 +71,14 @@ pub async fn process_audio_for_transcription(
                 if let Some(model_str) = model.as_str() {
                     model_str.to_string()
                 } else {
-                    "base".to_string() // Default for loopback - upgraded from small for better quality
+                    "large".to_string() // Default for loopback - maximum quality
                 }
             } else {
-                "small".to_string() // Default for loopback - same as microphone
+                "large".to_string() // Default for loopback - maximum quality
             }
         }
-        Ok(None) => "small".to_string(), // No settings found, use default
-        Err(_) => "small".to_string() // Error loading settings, use default
+        Ok(None) => "large".to_string(), // No settings found, use default
+        Err(_) => "large".to_string() // Error loading settings, use default
     };
     
     // println!("[AUDIO_PROCESSOR] Using Whisper model: {}", model_size); // Commented out: Audio loopback is working, reducing console noise for debugging focus

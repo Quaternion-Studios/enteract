@@ -52,7 +52,7 @@ export function useSpeechTranscription() {
 
   // Configuration
   const defaultWhisperConfig: WhisperConfig = {
-    modelSize: 'base',
+    modelSize: 'large',
     language: 'en',
     enableVAD: true,
     silenceThreshold: 0.01,
@@ -599,7 +599,7 @@ export function useSpeechTranscription() {
     try {
       // Don't set isProcessing to true here - let background processing happen
       // without blocking the UI state
-      console.log(`🔄 Processing ${audioChunks.length} audio chunks with Whisper (small model)...`)
+      console.log(`🔄 Processing ${audioChunks.length} audio chunks with Whisper (large model)...`)
 
       // Combine audio chunks
       const audioBlob = new Blob(audioChunks, { type: mediaRecorder?.mimeType || 'audio/webm' })
@@ -631,9 +631,9 @@ export function useSpeechTranscription() {
             maxSegmentLength: defaultWhisperConfig.maxSegmentLength
           }
         }),
-        // Timeout after 15 seconds for small model (slower than tiny but more accurate)
-        new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error('Whisper processing timeout')), 15000)
+        // Timeout after 30 seconds for large model (slower but maximum quality)
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Whisper processing timeout')), 30000)
         )
       ])
 
@@ -672,7 +672,7 @@ export function useSpeechTranscription() {
           timestamp: Date.now()
         })
 
-        console.log('✅ Whisper transcription (small model):', newText)
+        console.log('✅ Whisper transcription (large model):', newText)
       } else {
         console.log('ℹ️ Whisper returned empty text')
       }

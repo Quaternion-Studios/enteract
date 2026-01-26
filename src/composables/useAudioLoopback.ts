@@ -282,7 +282,7 @@ export function useAudioLoopback() {
 
       // Transcribe using Whisper
       const result = await transcribeAudioBase64(base64Audio, {
-        modelSize: 'base',
+        modelSize: 'large',
         sampleRate: settings.value.sampleRate,
         channels: 1, // Always mono after processing
         language: 'en',
