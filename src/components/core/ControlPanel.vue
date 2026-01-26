@@ -129,7 +129,7 @@ onMounted(async () => {
   document.addEventListener('keydown', handleKeydown)
   // Removed drag event listeners - using Tauri's native drag region
 
-  await store.initializeSpeechTranscription('tiny')
+  await store.initializeSpeechTranscription('base')
 
   await resizeWindow(false, false, false, false, false)
 

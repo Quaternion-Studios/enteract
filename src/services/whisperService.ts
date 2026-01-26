@@ -26,7 +26,7 @@ export async function transcribeAudioBase64(
   options: TranscriptionOptions = {}
 ): Promise<TranscriptionResult> {
   const config = {
-    modelSize: options.modelSize || 'tiny',
+    modelSize: options.modelSize || 'base',
     language: options.language || 'en', 
     enableVad: options.enableVad ?? true,
     silenceThreshold: options.silenceThreshold || 0.01,
@@ -50,7 +50,7 @@ export async function transcribeAudioBase64(
 /**
  * Check if Whisper model is available
  */
-export async function checkWhisperModelAvailability(modelSize: string = 'tiny'): Promise<boolean> {
+export async function checkWhisperModelAvailability(modelSize: string = 'base'): Promise<boolean> {
   try {
     return await invoke<boolean>('check_whisper_model_availability', { modelSize })
   } catch (error) {
@@ -62,7 +62,7 @@ export async function checkWhisperModelAvailability(modelSize: string = 'tiny'):
 /**
  * Download Whisper model if not available
  */
-export async function downloadWhisperModel(modelSize: string = 'tiny'): Promise<void> {
+export async function downloadWhisperModel(modelSize: string = 'base'): Promise<void> {
   try {
     await invoke('download_whisper_model', { modelSize })
   } catch (error) {
@@ -74,7 +74,7 @@ export async function downloadWhisperModel(modelSize: string = 'tiny'): Promise<
 /**
  * Initialize Whisper model
  */
-export async function initializeWhisperModel(modelSize: string = 'tiny'): Promise<void> {
+export async function initializeWhisperModel(modelSize: string = 'base'): Promise<void> {
   try {
     await invoke('initialize_whisper_model', { modelSize })
   } catch (error) {

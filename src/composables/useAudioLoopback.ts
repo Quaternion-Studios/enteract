@@ -279,10 +279,10 @@ export function useAudioLoopback() {
     try {
       // Convert to base64 for Whisper
       const base64Audio = btoa(String.fromCharCode(...audioData.data))
-      
+
       // Transcribe using Whisper
       const result = await transcribeAudioBase64(base64Audio, {
-        modelSize: 'tiny',
+        modelSize: 'base',
         sampleRate: settings.value.sampleRate,
         channels: 1, // Always mono after processing
         language: 'en',
