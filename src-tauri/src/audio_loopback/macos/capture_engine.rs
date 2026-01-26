@@ -28,7 +28,7 @@ impl SimpleBuffer {
         }
     }
 
-    fn add_samples(&mut self, new_samples: &[f32]) -> Option<Vec<f32>> {
+    fn add_samples(&mut self, new_samples: &[f32]) -> Option<(Vec<f32>, u32)> {
         self.samples.extend_from_slice(new_samples);
 
         let current_duration_ms = (self.samples.len() as f32 / self.sample_rate as f32 * 1000.0) as u32;
@@ -36,7 +36,7 @@ impl SimpleBuffer {
         if current_duration_ms >= self.chunk_duration_ms {
             let chunk = self.samples.clone();
             self.samples.clear();
-            Some(chunk)
+            Some((chunk, self.sample_rate))
         } else {
             None
         }
@@ -50,17 +50,20 @@ pub struct CPALCaptureEngine {
     is_capturing: bool,
     stream: Option<cpal::Stream>,
     buffer: Arc<Mutex<SimpleBuffer>>,
+    actual_sample_rate: u32,
 }
 
 impl CPALCaptureEngine {
     pub fn new(device_id: String, device_type: DeviceType) -> Self {
-        const TARGET_SAMPLE_RATE: u32 = 16000;
+        // Will be updated to actual device sample rate on start
+        const DEFAULT_SAMPLE_RATE: u32 = 48000;
         Self {
             device_id,
             device_type,
             is_capturing: false,
             stream: None,
-            buffer: Arc::new(Mutex::new(SimpleBuffer::new(TARGET_SAMPLE_RATE))),
+            buffer: Arc::new(Mutex::new(SimpleBuffer::new(DEFAULT_SAMPLE_RATE))),
+            actual_sample_rate: DEFAULT_SAMPLE_RATE,
         }
     }
 
@@ -81,9 +84,13 @@ impl CPALCaptureEngine {
             .default_input_config()
             .map_err(|e| format!("Failed to get device config: {}", e))?;
 
-        let sample_rate = config.sample_rate();
-        println!("[CPAL] Starting capture: device={}, sample_rate={:?}, channels={}, format={:?}",
+        let sample_rate = config.sample_rate();  // Already returns u32
+        println!("[CPAL] Starting capture: device={}, sample_rate={}Hz, channels={}, format={:?}",
             self.device_id, sample_rate, config.channels(), config.sample_format());
+
+        // Update buffer with actual sample rate
+        self.actual_sample_rate = sample_rate;
+        self.buffer = Arc::new(Mutex::new(SimpleBuffer::new(sample_rate)));
 
         // Clone buffer for callback
         let buffer = Arc::clone(&self.buffer);
@@ -187,14 +194,12 @@ impl CPALCaptureEngine {
         app_handle: &tauri::AppHandle,
         device_type: &DeviceType,
     ) {
-        const TARGET_SAMPLE_RATE: u32 = 16000;
-
         // Add samples to buffer and check if a chunk is ready
         if let Ok(mut buf) = buffer.lock() {
-            if let Some(chunk) = buf.add_samples(data) {
+            if let Some((chunk, sample_rate)) = buf.add_samples(data) {
                 // Chunk is ready for transcription
-                println!("[CPAL] Chunk ready: {:.2}s",
-                         chunk.len() as f32 / TARGET_SAMPLE_RATE as f32);
+                println!("[CPAL] Chunk ready: {:.2}s at {}Hz",
+                         chunk.len() as f32 / sample_rate as f32, sample_rate);
 
                 // Process in background (don't block audio thread)
                 let app_handle_clone = app_handle.clone();
@@ -214,7 +219,7 @@ impl CPALCaptureEngine {
                     rt.block_on(async {
                         if let Err(e) = process_audio_for_transcription(
                             pcm_bytes,
-                            TARGET_SAMPLE_RATE,
+                            sample_rate,  // Use actual sample rate from device
                             app_handle_clone,
                             device_type_clone,
                         )

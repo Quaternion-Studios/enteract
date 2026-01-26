@@ -19,18 +19,20 @@ pub async fn process_audio_for_transcription(
     // First process the audio through our pipeline to match Python's fast_audio_process
     // println!("[PROCESS] Input: {} bytes, {} Hz", audio_data.len(), sample_rate); // Commented out: Audio loopback is working, reducing console noise for debugging focus
     
+    // QUALITY FIX: Pass audio at native sample rate to Whisper
+    // Let Whisper handle resampling internally (much better quality than our crude decimation)
     let processed_samples = process_audio_chunk(
         &audio_data,
         16,  // We're receiving PCM16
         2,   // Stereo input expected
         sample_rate,
-        16000  // Target Whisper sample rate
+        sample_rate  // Keep native sample rate - let Whisper resample
     );
-    
-    // println!("[PROCESS] Output: {} samples at 16kHz", processed_samples.len()); // Commented out: Audio loopback is working, reducing console noise for debugging focus
 
-    // Check minimum audio length (0.5 seconds at 16kHz) - Whisper will handle the rest
-    let min_samples = (16000.0 * 0.5) as usize;
+    // println!("[PROCESS] Output: {} samples at {}Hz", processed_samples.len(), sample_rate); // Commented out: Audio loopback is working, reducing console noise for debugging focus
+
+    // Check minimum audio length (0.5 seconds at native sample rate)
+    let min_samples = (sample_rate as f32 * 0.5) as usize;
     if processed_samples.len() < min_samples {
         // println!("[PROCESS] Too short: {} samples < {} required", processed_samples.len(), min_samples); // Commented out: Audio loopback is working, reducing console noise for debugging focus
         return Ok("".to_string());
