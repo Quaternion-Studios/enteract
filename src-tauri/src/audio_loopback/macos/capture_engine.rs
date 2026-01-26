@@ -4,16 +4,50 @@
 // Phase 2 (en-03o): macOS CPAL audio implementation
 // References: Jack's research (resources/MACOS_AUDIO_LOOPBACK_RESEARCH.md)
 
-use crate::audio_loopback::shared::audio_processor::{process_audio_for_transcription, SmartBuffer};
+use crate::audio_loopback::shared::audio_processor::process_audio_for_transcription;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
+
+/// Simple audio buffer with time-based chunking
+///
+/// No fancy silence detection - just accumulate audio and send to Whisper
+/// every N seconds. Let Whisper's built-in VAD handle the rest.
+struct SimpleBuffer {
+    samples: Vec<f32>,
+    sample_rate: u32,
+    chunk_duration_ms: u32, // Send to Whisper every N milliseconds
+}
+
+impl SimpleBuffer {
+    fn new(sample_rate: u32) -> Self {
+        Self {
+            samples: Vec::new(),
+            sample_rate,
+            chunk_duration_ms: 4000, // 4 seconds - good chunk size for Whisper
+        }
+    }
+
+    fn add_samples(&mut self, new_samples: &[f32]) -> Option<Vec<f32>> {
+        self.samples.extend_from_slice(new_samples);
+
+        let current_duration_ms = (self.samples.len() as f32 / self.sample_rate as f32 * 1000.0) as u32;
+
+        if current_duration_ms >= self.chunk_duration_ms {
+            let chunk = self.samples.clone();
+            self.samples.clear();
+            Some(chunk)
+        } else {
+            None
+        }
+    }
+}
 
 /// macOS audio capture engine using CPAL
 pub struct CPALCaptureEngine {
     device_id: String,
     is_capturing: bool,
     stream: Option<cpal::Stream>,
-    smart_buffer: Arc<Mutex<SmartBuffer>>,
+    buffer: Arc<Mutex<SimpleBuffer>>,
 }
 
 impl CPALCaptureEngine {
@@ -23,7 +57,7 @@ impl CPALCaptureEngine {
             device_id,
             is_capturing: false,
             stream: None,
-            smart_buffer: Arc::new(Mutex::new(SmartBuffer::new(TARGET_SAMPLE_RATE))),
+            buffer: Arc::new(Mutex::new(SimpleBuffer::new(TARGET_SAMPLE_RATE))),
         }
     }
 
@@ -48,8 +82,8 @@ impl CPALCaptureEngine {
         println!("[CPAL] Starting capture: device={}, sample_rate={:?}, channels={}, format={:?}",
             self.device_id, sample_rate, config.channels(), config.sample_format());
 
-        // Clone smart buffer for callback
-        let smart_buffer = Arc::clone(&self.smart_buffer);
+        // Clone buffer for callback
+        let buffer = Arc::clone(&self.buffer);
         let app_handle_clone = app_handle.clone();
 
         // Build input stream based on sample format
@@ -58,7 +92,7 @@ impl CPALCaptureEngine {
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        Self::process_audio_callback(data, &smart_buffer, &app_handle_clone);
+                        Self::process_audio_callback(data, &buffer, &app_handle_clone);
                     },
                     |err| eprintln!("[CPAL] Stream error: {}", err),
                     None,
@@ -73,7 +107,7 @@ impl CPALCaptureEngine {
                             .iter()
                             .map(|&sample| sample as f32 / i16::MAX as f32)
                             .collect();
-                        Self::process_audio_callback(&f32_data, &smart_buffer, &app_handle_clone);
+                        Self::process_audio_callback(&f32_data, &buffer, &app_handle_clone);
                     },
                     |err| eprintln!("[CPAL] Stream error: {}", err),
                     None,
@@ -90,7 +124,7 @@ impl CPALCaptureEngine {
                                 (sample as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)
                             })
                             .collect();
-                        Self::process_audio_callback(&f32_data, &smart_buffer, &app_handle_clone);
+                        Self::process_audio_callback(&f32_data, &buffer, &app_handle_clone);
                     },
                     |err| eprintln!("[CPAL] Stream error: {}", err),
                     None,
@@ -136,29 +170,29 @@ impl CPALCaptureEngine {
         self.is_capturing
     }
 
-    /// Audio callback handler with smart buffering
+    /// Audio callback handler with simple time-based buffering
     ///
-    /// Processes incoming audio data using silence-based segmentation.
+    /// Accumulates audio and sends to Whisper every N seconds.
     /// Called by CPAL on audio thread.
     fn process_audio_callback(
         data: &[f32],
-        smart_buffer: &Arc<Mutex<SmartBuffer>>,
+        buffer: &Arc<Mutex<SimpleBuffer>>,
         app_handle: &tauri::AppHandle,
     ) {
         const TARGET_SAMPLE_RATE: u32 = 16000;
 
-        // Add samples to smart buffer and check if a segment is ready
-        if let Ok(mut buffer) = smart_buffer.lock() {
-            if let Some(segment) = buffer.add_samples(data) {
-                // Segment is ready for transcription
-                println!("[CPAL] Smart segment ready: {:.2}s (silence-based)",
-                         segment.len() as f32 / TARGET_SAMPLE_RATE as f32);
+        // Add samples to buffer and check if a chunk is ready
+        if let Ok(mut buf) = buffer.lock() {
+            if let Some(chunk) = buf.add_samples(data) {
+                // Chunk is ready for transcription
+                println!("[CPAL] Chunk ready: {:.2}s",
+                         chunk.len() as f32 / TARGET_SAMPLE_RATE as f32);
 
                 // Process in background (don't block audio thread)
                 let app_handle_clone = app_handle.clone();
                 std::thread::spawn(move || {
                     // Convert f32 samples to PCM16 bytes (what process_audio_for_transcription expects)
-                    let pcm_bytes: Vec<u8> = segment
+                    let pcm_bytes: Vec<u8> = chunk
                         .iter()
                         .flat_map(|&sample| {
                             let i16_sample = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
