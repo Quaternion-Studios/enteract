@@ -37,13 +37,23 @@ export const createMockSpeechTranscription = () => ({
   setContinuousMode: vi.fn(),
 })
 
-export const createMockChatManagement = () => ({
+export const createMockChatManagement = (overrides?: Partial<ReturnType<typeof createMockChatManagement>>) => ({
   chatMessage: ref(''),
   chatHistory: ref([]),
+  chatSessions: ref([
+    { id: 'chat-1', title: 'First Chat', updatedAt: '2024-01-15T10:00:00Z', history: [] },
+    { id: 'chat-2', title: 'Second Chat', updatedAt: '2024-01-15T11:00:00Z', history: [{ role: 'user', content: 'Hello' }] },
+  ]),
+  currentChatId: ref('chat-1'),
+  currentChatHistory: ref([]),
+  currentChatSession: ref(null),
   createNewChat: vi.fn(),
   switchChat: vi.fn(),
   deleteChat: vi.fn(),
+  renameChat: vi.fn(),
   clearChat: vi.fn(),
+  loadAllChats: vi.fn(),
+  saveAllChats: vi.fn(),
   fileInput: ref(null),
   renderMarkdown: vi.fn((text: string) => text),
   takeScreenshotAndAnalyze: vi.fn(),
@@ -52,9 +62,12 @@ export const createMockChatManagement = () => ({
   startCodingAgent: vi.fn(),
   startComputerUseAgent: vi.fn(),
   sendMessage: vi.fn(),
+  handleChatKeydown: vi.fn(),
   triggerFileUpload: vi.fn(),
   handleFileUpload: vi.fn(),
   estimateTokens: vi.fn(() => 100),
+  cancelResponse: vi.fn(),
+  ...overrides,
 })
 
 export const createMockMLEyeTracking = () => ({
