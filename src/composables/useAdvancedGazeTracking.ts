@@ -1,4 +1,4 @@
-import { ref, reactive, computed, watch, onUnmounted, readonly } from 'vue'
+import { ref, computed, onUnmounted, readonly } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 
 // Interface definitions for enhanced gaze tracking

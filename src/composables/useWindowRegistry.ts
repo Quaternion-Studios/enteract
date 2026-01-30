@@ -1,4 +1,4 @@
-import { ref, onUnmounted, nextTick } from 'vue'
+import { onUnmounted } from 'vue'
 import type { 
   WindowRegistryConfig, 
   RegisteredWindow, 

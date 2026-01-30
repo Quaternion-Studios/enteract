@@ -2,15 +2,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { ChatSession, SaveChatsPayload, LoadChatsResponse } from '../types/chat'
 
-interface BackupInfo {
-  filename: string
-  backup_type: string
-  size: number
-  modified: number
-}
-
 export class StorageService {
-  private static readonly STORAGE_KEY = 'user_chat_sessions.json'
   private static readonly MAX_RETRIES = 3
   private static readonly RETRY_DELAY = 1000 // 1 second
   private static saveQueue: ChatSession[] | null = null

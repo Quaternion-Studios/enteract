@@ -46,9 +46,6 @@ export const useConversationStore = defineStore('conversation', () => {
   const isRecording = ref(false)
   const isAudioLoopbackActive = ref(false)
 
-  // Persistence key
-  const STORAGE_KEY = 'conversation-sessions'
-
   // Load sessions from SQLite backend
   const loadSessions = async () => {
     try {

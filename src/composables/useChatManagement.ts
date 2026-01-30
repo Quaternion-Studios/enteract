@@ -1,5 +1,5 @@
 // useChatManagement.ts - Main composable that orchestrates all chat functionality
-import { ref, watch, onMounted, onUnmounted, type Ref } from 'vue'
+import { ref, watch, onMounted, type Ref } from 'vue'
 import type { ChatMessage } from '../types/chat'
 import { sharedChatState } from './sharedState'
 import { StorageService } from './storageService'
