@@ -1,6 +1,6 @@
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { ConversationMessage, ConversationSession } from '../stores/conversation'
+import { ConversationMessage } from '../stores/conversation'
 
 interface MessageSaveRequest {
   message: ConversationMessage

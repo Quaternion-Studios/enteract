@@ -1,4 +1,4 @@
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import { Window } from '@tauri-apps/api/window'
 import { LogicalSize, LogicalPosition } from '@tauri-apps/api/dpi'
 import { useAppStore } from '../stores/app'
@@ -72,7 +72,6 @@ export function useWindowManager() {
   })
 
   // Movement smoothing
-  const targetPosition = ref<Point2D>({ x: 0, y: 0 })
   const movementHistory = ref<Point2D[]>([])
   const smoothingQueue = ref<Point2D[]>([])
 
@@ -184,14 +183,6 @@ export function useWindowManager() {
         }
       }
     }
-  }
-
-  // Listen for window events
-  const setupWindowListeners = () => {
-    // These would be set up in a real Tauri app
-    // currentWindow.listen('tauri://move', (event) => {
-    //   store.updateWindowPosition(event.payload.x, event.payload.y)
-    // })
   }
 
   // Monitor management functions
@@ -503,10 +494,8 @@ export function useWindowManager() {
     startDrag,
     minimizeWindow,
     closeWindow,
-    setupWindowListeners,
     state: computed(() => state.value),
     config: computed(() => config.value),
-    targetPosition: computed(() => targetPosition.value),
     windowBounds: getWindowBounds,
     movementStats,
     processGazeInput,

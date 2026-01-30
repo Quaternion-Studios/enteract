@@ -1,6 +1,5 @@
 import { ref, computed, watch, onMounted, onUnmounted, readonly } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { Window } from '@tauri-apps/api/window'
 
 export interface TransparencyState {
   level: number
@@ -27,9 +26,6 @@ export function useTransparency() {
     isClickThrough: isClickThrough.value,
     isVisible: isVisible.value
   }))
-
-  // Tauri window reference
-  const currentWindow = Window.getCurrent()
 
   // Apply transparency to OS window
   const applyTransparency = async (level: number): Promise<void> => {
@@ -112,39 +108,6 @@ export function useTransparency() {
     }
   }
 
-  // Keyboard shortcuts handler
-  const handleKeyDown = (event: KeyboardEvent) => {
-    // Ctrl+T: Toggle transparency
-    if (event.ctrlKey && event.key === 't') {
-      event.preventDefault()
-      toggle()
-      return
-    }
-    
-    // Ctrl+H: Ghost mode (30% opacity)
-    if (event.ctrlKey && event.key === 'h') {
-      event.preventDefault()
-      presets.ghostMode()
-      return
-    }
-    
-    // Escape: Emergency restore
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      emergencyRestore()
-      return
-    }
-    
-    // Ctrl+Shift+T: Invisible mode
-    if (event.ctrlKey && event.shiftKey && event.key === 'T') {
-      event.preventDefault()
-      presets.invisible()
-      return
-    }
-  }
-
-
-
   // Setup and cleanup
   onMounted(() => {
     // Temporarily disable loading preferences to debug window disappearing issue
@@ -175,8 +138,7 @@ export function useTransparency() {
   })
 
   onUnmounted(() => {
-    // Remove keyboard listeners
-    document.removeEventListener('keydown', handleKeyDown)
+    // Cleanup placeholder - keyboard listeners disabled (controlled through settings panel)
   })
 
   // Utility functions
