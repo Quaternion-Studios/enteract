@@ -1504,3 +1504,710 @@ pub async fn get_mcp_session_for_ai(
 ) -> Result<crate::mcp::types::MCPSessionInfo, String> {
     crate::mcp::commands::get_mcp_session_info(mcp_session_id, mcp_sessions).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    // ============================================================================
+    // OllamaModel and ModelDetails tests
+    // ============================================================================
+
+    #[test]
+    fn test_ollama_model_serialization() {
+        let model = OllamaModel {
+            name: "llama2:7b".to_string(),
+            modified_at: "2024-01-15T10:30:00Z".to_string(),
+            size: 3_825_819_648,
+            digest: "sha256:abc123def456".to_string(),
+            details: Some(ModelDetails {
+                format: "gguf".to_string(),
+                family: "llama".to_string(),
+                families: Some(vec!["llama".to_string()]),
+                parameter_size: "7B".to_string(),
+                quantization_level: "Q4_0".to_string(),
+            }),
+        };
+
+        let json = serde_json::to_string(&model).expect("Failed to serialize");
+        assert!(json.contains("llama2:7b"));
+        assert!(json.contains("3825819648"));
+        assert!(json.contains("sha256:abc123def456"));
+    }
+
+    #[test]
+    fn test_ollama_model_deserialization() {
+        let json = r#"{
+            "name": "gemma:2b",
+            "modified_at": "2024-01-20T15:00:00Z",
+            "size": 1500000000,
+            "digest": "sha256:xyz789",
+            "details": {
+                "format": "gguf",
+                "family": "gemma",
+                "families": ["gemma"],
+                "parameter_size": "2B",
+                "quantization_level": "Q4_K_M"
+            }
+        }"#;
+
+        let model: OllamaModel = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(model.name, "gemma:2b");
+        assert_eq!(model.size, 1500000000);
+        assert!(model.details.is_some());
+        assert_eq!(model.details.as_ref().unwrap().family, "gemma");
+    }
+
+    #[test]
+    fn test_ollama_model_without_details() {
+        let json = r#"{
+            "name": "codellama:13b",
+            "modified_at": "2024-02-01T08:00:00Z",
+            "size": 7000000000,
+            "digest": "sha256:abcdef",
+            "details": null
+        }"#;
+
+        let model: OllamaModel = serde_json::from_str(json).expect("Failed to deserialize");
+        assert_eq!(model.name, "codellama:13b");
+        assert!(model.details.is_none());
+    }
+
+    // ============================================================================
+    // OllamaStatus tests
+    // ============================================================================
+
+    #[test]
+    fn test_ollama_status_running() {
+        let status = OllamaStatus {
+            status: "running".to_string(),
+            version: Some("0.1.23".to_string()),
+        };
+
+        let json = serde_json::to_string(&status).expect("Failed to serialize");
+        assert!(json.contains("running"));
+        assert!(json.contains("0.1.23"));
+    }
+
+    #[test]
+    fn test_ollama_status_not_running() {
+        let status = OllamaStatus {
+            status: "not_running".to_string(),
+            version: None,
+        };
+
+        let json = serde_json::to_string(&status).expect("Failed to serialize");
+        assert!(json.contains("not_running"));
+        assert!(json.contains("null"));
+    }
+
+    // ============================================================================
+    // ChatContextMessage tests
+    // ============================================================================
+
+    #[test]
+    fn test_chat_context_message_user() {
+        let msg = ChatContextMessage {
+            role: "user".to_string(),
+            content: "Hello, how are you?".to_string(),
+        };
+
+        let json = serde_json::to_string(&msg).expect("Failed to serialize");
+        let deserialized: ChatContextMessage = serde_json::from_str(&json).expect("Failed to deserialize");
+
+        assert_eq!(deserialized.role, "user");
+        assert_eq!(deserialized.content, "Hello, how are you?");
+    }
+
+    #[test]
+    fn test_chat_context_message_assistant() {
+        let msg = ChatContextMessage {
+            role: "assistant".to_string(),
+            content: "I'm doing well, thank you!".to_string(),
+        };
+
+        assert_eq!(msg.role, "assistant");
+        assert_eq!(msg.content, "I'm doing well, thank you!");
+    }
+
+    // ============================================================================
+    // GenerateRequest tests
+    // ============================================================================
+
+    #[test]
+    fn test_generate_request_minimal() {
+        let request = GenerateRequest {
+            model: "llama2".to_string(),
+            prompt: "Hello".to_string(),
+            stream: None,
+            context: None,
+            images: None,
+            system: None,
+            options: None,
+        };
+
+        let json = serde_json::to_string(&request).expect("Failed to serialize");
+        assert!(json.contains("llama2"));
+        assert!(json.contains("Hello"));
+    }
+
+    #[test]
+    fn test_generate_request_full() {
+        let request = GenerateRequest {
+            model: "llama2:7b".to_string(),
+            prompt: "Write a poem".to_string(),
+            stream: Some(true),
+            context: Some(vec![1, 2, 3, 4, 5]),
+            images: Some(vec!["base64image".to_string()]),
+            system: Some("You are a poet".to_string()),
+            options: Some(serde_json::json!({"temperature": 0.7})),
+        };
+
+        let json = serde_json::to_string(&request).expect("Failed to serialize");
+        let deserialized: GenerateRequest = serde_json::from_str(&json).expect("Failed to deserialize");
+
+        assert_eq!(deserialized.model, "llama2:7b");
+        assert_eq!(deserialized.stream, Some(true));
+        assert_eq!(deserialized.context, Some(vec![1, 2, 3, 4, 5]));
+        assert!(deserialized.images.is_some());
+        assert_eq!(deserialized.system, Some("You are a poet".to_string()));
+    }
+
+    // ============================================================================
+    // GenerateResponse tests
+    // ============================================================================
+
+    #[test]
+    fn test_generate_response_in_progress() {
+        let response = GenerateResponse {
+            model: "llama2".to_string(),
+            created_at: "2024-01-15T10:30:00Z".to_string(),
+            response: "The quick ".to_string(),
+            done: false,
+            context: None,
+            total_duration: None,
+            load_duration: None,
+            prompt_eval_count: None,
+            prompt_eval_duration: None,
+            eval_count: None,
+            eval_duration: None,
+        };
+
+        assert!(!response.done);
+        assert_eq!(response.response, "The quick ");
+    }
+
+    #[test]
+    fn test_generate_response_complete() {
+        let json = r#"{
+            "model": "llama2",
+            "created_at": "2024-01-15T10:30:05Z",
+            "response": "",
+            "done": true,
+            "context": [1, 2, 3],
+            "total_duration": 5000000000,
+            "load_duration": 100000000,
+            "prompt_eval_count": 10,
+            "prompt_eval_duration": 200000000,
+            "eval_count": 50,
+            "eval_duration": 4700000000
+        }"#;
+
+        let response: GenerateResponse = serde_json::from_str(json).expect("Failed to deserialize");
+        assert!(response.done);
+        assert_eq!(response.context, Some(vec![1, 2, 3]));
+        assert_eq!(response.total_duration, Some(5000000000));
+        assert_eq!(response.eval_count, Some(50));
+    }
+
+    // ============================================================================
+    // StreamState tests
+    // ============================================================================
+
+    #[test]
+    fn test_stream_state_new() {
+        let state = StreamState::new();
+
+        assert_eq!(state.chunk_count, 0);
+        assert_eq!(state.repeat_count, 0);
+        assert_eq!(state.consecutive_empty_count, 0);
+        assert_eq!(state.total_empty_count, 0);
+        assert!(state.last_chunk_text.is_empty());
+    }
+
+    #[test]
+    fn test_stream_state_update_chunk_normal() {
+        let mut state = StreamState::new();
+
+        let result = state.update_chunk("Hello ");
+        assert!(matches!(result, ChunkResult::Continue));
+        assert_eq!(state.chunk_count, 1);
+        assert_eq!(state.last_chunk_text, "Hello ");
+        assert_eq!(state.repeat_count, 0);
+    }
+
+    #[test]
+    fn test_stream_state_update_chunk_empty() {
+        let mut state = StreamState::new();
+
+        let result = state.update_chunk("");
+        assert!(matches!(result, ChunkResult::Continue));
+        assert_eq!(state.consecutive_empty_count, 1);
+        assert_eq!(state.total_empty_count, 1);
+
+        let result2 = state.update_chunk("   ");
+        assert!(matches!(result2, ChunkResult::Continue));
+        assert_eq!(state.consecutive_empty_count, 2);
+        assert_eq!(state.total_empty_count, 2);
+    }
+
+    #[test]
+    fn test_stream_state_empty_count_resets_on_content() {
+        let mut state = StreamState::new();
+
+        // Add some empty chunks
+        state.update_chunk("");
+        state.update_chunk("  ");
+        assert_eq!(state.consecutive_empty_count, 2);
+
+        // Add content - should reset consecutive count
+        state.update_chunk("Content");
+        assert_eq!(state.consecutive_empty_count, 0);
+        assert_eq!(state.total_empty_count, 2); // Total should remain
+    }
+
+    #[test]
+    fn test_stream_state_repeat_detection() {
+        let mut state = StreamState::new();
+
+        state.update_chunk("Hello");
+        assert_eq!(state.repeat_count, 0);
+
+        state.update_chunk("Hello");
+        assert_eq!(state.repeat_count, 1);
+
+        state.update_chunk("Hello");
+        assert_eq!(state.repeat_count, 2);
+
+        // Different content resets count
+        state.update_chunk("World");
+        assert_eq!(state.repeat_count, 0);
+    }
+
+    #[test]
+    fn test_stream_state_short_repeat_exit() {
+        let mut state = StreamState::new();
+
+        // Short chunks (<=20 chars) trigger exit when repeat_count > 3
+        // First call sets the text, subsequent calls increment repeat_count
+        state.update_chunk("Hi"); // Sets last_chunk_text
+        state.update_chunk("Hi"); // repeat_count = 1
+        state.update_chunk("Hi"); // repeat_count = 2
+        state.update_chunk("Hi"); // repeat_count = 3
+        let result = state.update_chunk("Hi"); // repeat_count = 4, triggers exit (> 3)
+
+        assert!(matches!(result, ChunkResult::Exit(_)));
+    }
+
+    #[test]
+    fn test_stream_state_should_timeout_total() {
+        let mut state = StreamState::new();
+
+        // Simulate time passing by modifying start_time
+        state.start_time = Instant::now() - Duration::from_secs(310);
+
+        let result = state.should_timeout(Duration::from_secs(300), Duration::from_secs(30));
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("Total stream timeout"));
+    }
+
+    #[test]
+    fn test_stream_state_should_timeout_gap() {
+        let mut state = StreamState::new();
+
+        // Simulate chunk gap by modifying last_chunk_time
+        state.last_chunk_time = Instant::now() - Duration::from_secs(35);
+
+        let result = state.should_timeout(Duration::from_secs(300), Duration::from_secs(30));
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("Chunk gap timeout"));
+    }
+
+    #[test]
+    fn test_stream_state_no_timeout() {
+        let state = StreamState::new();
+
+        let result = state.should_timeout(Duration::from_secs(300), Duration::from_secs(30));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_stream_state_terminate_patterns_repeats() {
+        let mut state = StreamState::new();
+        state.repeat_count = 16; // 3x the default max of 5
+
+        let result = state.should_terminate_patterns(5, 25);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("consecutive repeats"));
+    }
+
+    #[test]
+    fn test_stream_state_terminate_patterns_empty() {
+        let mut state = StreamState::new();
+        state.consecutive_empty_count = 30;
+
+        let result = state.should_terminate_patterns(5, 25);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("empty chunks"));
+    }
+
+    #[test]
+    fn test_stream_state_no_terminate() {
+        let state = StreamState::new();
+
+        let result = state.should_terminate_patterns(5, 25);
+        assert!(result.is_none());
+    }
+
+    // ============================================================================
+    // StreamConfig tests
+    // ============================================================================
+
+    #[test]
+    fn test_stream_config_default() {
+        let config = StreamConfig::default();
+
+        assert_eq!(config.max_total_duration, Duration::from_secs(300));
+        assert_eq!(config.max_chunk_gap, Duration::from_secs(30));
+        assert_eq!(config.chunk_timeout, Duration::from_secs(10));
+        assert_eq!(config.max_consecutive_repeats, 5);
+        assert_eq!(config.max_consecutive_empty_chunks, 25);
+    }
+
+    #[test]
+    fn test_stream_config_custom() {
+        let config = StreamConfig {
+            max_total_duration: Duration::from_secs(120),
+            max_chunk_gap: Duration::from_secs(15),
+            chunk_timeout: Duration::from_secs(5),
+            max_consecutive_repeats: 3,
+            max_consecutive_empty_chunks: 10,
+        };
+
+        assert_eq!(config.max_total_duration, Duration::from_secs(120));
+        assert_eq!(config.max_consecutive_repeats, 3);
+    }
+
+    // ============================================================================
+    // build_prompt_with_context tests
+    // ============================================================================
+
+    #[test]
+    fn test_build_prompt_with_context_none() {
+        let prompt = "What is 2+2?".to_string();
+        let result = build_prompt_with_context(prompt.clone(), None);
+
+        assert_eq!(result, prompt);
+    }
+
+    #[test]
+    fn test_build_prompt_with_context_empty() {
+        let prompt = "What is 2+2?".to_string();
+        let result = build_prompt_with_context(prompt.clone(), Some(vec![]));
+
+        assert_eq!(result, prompt);
+    }
+
+    #[test]
+    fn test_build_prompt_with_context_single_message() {
+        let prompt = "Follow up question".to_string();
+        let context = vec![
+            ChatContextMessage {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+            },
+        ];
+
+        let result = build_prompt_with_context(prompt, Some(context));
+
+        assert!(result.contains("Conversation History"));
+        assert!(result.contains("**User:** Hello"));
+        assert!(result.contains("Current Request"));
+        assert!(result.contains("Follow up question"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_context_multiple_messages() {
+        let prompt = "Thanks!".to_string();
+        let context = vec![
+            ChatContextMessage {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+            },
+            ChatContextMessage {
+                role: "assistant".to_string(),
+                content: "Hi there!".to_string(),
+            },
+            ChatContextMessage {
+                role: "system".to_string(),
+                content: "Be helpful".to_string(),
+            },
+        ];
+
+        let result = build_prompt_with_context(prompt, Some(context));
+
+        assert!(result.contains("**User:** Hello"));
+        assert!(result.contains("**Assistant:** Hi there!"));
+        assert!(result.contains("**System:** Be helpful"));
+        assert!(result.contains("Thanks!"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_context_unknown_role() {
+        let prompt = "Query".to_string();
+        let context = vec![
+            ChatContextMessage {
+                role: "custom_role".to_string(),
+                content: "Custom message".to_string(),
+            },
+        ];
+
+        let result = build_prompt_with_context(prompt, Some(context));
+
+        assert!(result.contains("**custom_role:** Custom message"));
+    }
+
+    // ============================================================================
+    // build_context_string tests
+    // ============================================================================
+
+    #[test]
+    fn test_build_context_string_empty() {
+        let context: Vec<ChatContextMessage> = vec![];
+        let result = build_context_string(context);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_build_context_string_single() {
+        let context = vec![
+            ChatContextMessage {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+            },
+        ];
+
+        let result = build_context_string(context);
+
+        assert!(result.contains("User**: Hello"));
+    }
+
+    #[test]
+    fn test_build_context_string_multiple() {
+        let context = vec![
+            ChatContextMessage {
+                role: "user".to_string(),
+                content: "Question".to_string(),
+            },
+            ChatContextMessage {
+                role: "assistant".to_string(),
+                content: "Answer".to_string(),
+            },
+        ];
+
+        let result = build_context_string(context);
+
+        assert!(result.contains("User**: Question"));
+        assert!(result.contains("Assistant**: Answer"));
+    }
+
+    // ============================================================================
+    // PullRequest tests
+    // ============================================================================
+
+    #[test]
+    fn test_pull_request_serialization() {
+        let request = PullRequest {
+            name: "llama2:latest".to_string(),
+            insecure: Some(false),
+            stream: Some(true),
+        };
+
+        let json = serde_json::to_string(&request).expect("Failed to serialize");
+        assert!(json.contains("llama2:latest"));
+        assert!(json.contains("\"insecure\":false"));
+        assert!(json.contains("\"stream\":true"));
+    }
+
+    #[test]
+    fn test_pull_request_minimal() {
+        let json = r#"{"name": "gemma:7b"}"#;
+        let request: PullRequest = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert_eq!(request.name, "gemma:7b");
+        assert!(request.insecure.is_none());
+        assert!(request.stream.is_none());
+    }
+
+    // ============================================================================
+    // ChunkResult tests
+    // ============================================================================
+
+    #[test]
+    fn test_chunk_result_continue() {
+        let result = ChunkResult::Continue;
+        assert!(matches!(result, ChunkResult::Continue));
+    }
+
+    #[test]
+    fn test_chunk_result_exit() {
+        let result = ChunkResult::Exit("Test reason".to_string());
+        if let ChunkResult::Exit(reason) = result {
+            assert_eq!(reason, "Test reason");
+        } else {
+            panic!("Expected Exit variant");
+        }
+    }
+
+    // ============================================================================
+    // Session management tests
+    // ============================================================================
+
+    #[test]
+    fn test_is_session_cancelled_new_session() {
+        // A new session that was never registered should return false
+        let result = is_session_cancelled("nonexistent-session-id");
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_cleanup_session() {
+        // Add a session
+        {
+            let mut sessions = ACTIVE_SESSIONS.lock().unwrap();
+            sessions.insert("test-cleanup-session".to_string(), true);
+        }
+
+        // Verify it exists
+        assert!(is_session_cancelled("test-cleanup-session"));
+
+        // Clean it up
+        cleanup_session("test-cleanup-session");
+
+        // Verify it's gone
+        assert!(!is_session_cancelled("test-cleanup-session"));
+    }
+
+    // ============================================================================
+    // ModelDetails tests
+    // ============================================================================
+
+    #[test]
+    fn test_model_details_full() {
+        let details = ModelDetails {
+            format: "gguf".to_string(),
+            family: "llama".to_string(),
+            families: Some(vec!["llama".to_string(), "codellama".to_string()]),
+            parameter_size: "13B".to_string(),
+            quantization_level: "Q5_K_M".to_string(),
+        };
+
+        let json = serde_json::to_string(&details).expect("Failed to serialize");
+        let deserialized: ModelDetails = serde_json::from_str(&json).expect("Failed to deserialize");
+
+        assert_eq!(deserialized.format, "gguf");
+        assert_eq!(deserialized.family, "llama");
+        assert_eq!(deserialized.families, Some(vec!["llama".to_string(), "codellama".to_string()]));
+        assert_eq!(deserialized.parameter_size, "13B");
+        assert_eq!(deserialized.quantization_level, "Q5_K_M");
+    }
+
+    #[test]
+    fn test_model_details_no_families() {
+        let json = r#"{
+            "format": "ggml",
+            "family": "mistral",
+            "families": null,
+            "parameter_size": "7B",
+            "quantization_level": "Q4_0"
+        }"#;
+
+        let details: ModelDetails = serde_json::from_str(json).expect("Failed to deserialize");
+        assert!(details.families.is_none());
+    }
+
+    // ============================================================================
+    // OllamaModelsResponse tests
+    // ============================================================================
+
+    #[test]
+    fn test_ollama_models_response_empty() {
+        let response = OllamaModelsResponse {
+            models: vec![],
+        };
+
+        let json = serde_json::to_string(&response).expect("Failed to serialize");
+        assert!(json.contains("\"models\":[]"));
+    }
+
+    #[test]
+    fn test_ollama_models_response_multiple() {
+        let response = OllamaModelsResponse {
+            models: vec![
+                OllamaModel {
+                    name: "llama2:7b".to_string(),
+                    modified_at: "2024-01-15T10:30:00Z".to_string(),
+                    size: 3_825_819_648,
+                    digest: "sha256:abc".to_string(),
+                    details: None,
+                },
+                OllamaModel {
+                    name: "gemma:2b".to_string(),
+                    modified_at: "2024-01-20T15:00:00Z".to_string(),
+                    size: 1_500_000_000,
+                    digest: "sha256:xyz".to_string(),
+                    details: None,
+                },
+            ],
+        };
+
+        assert_eq!(response.models.len(), 2);
+        assert_eq!(response.models[0].name, "llama2:7b");
+        assert_eq!(response.models[1].name, "gemma:2b");
+    }
+
+    // ============================================================================
+    // Integration tests (require Ollama running)
+    // ============================================================================
+
+    #[tokio::test]
+    #[ignore = "Requires Ollama server running"]
+    async fn test_get_ollama_status_integration() {
+        let result = get_ollama_status().await;
+        // Either succeeds with running status or returns not_running
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires Ollama server running"]
+    async fn test_get_ollama_models_integration() {
+        let result = get_ollama_models().await;
+        // This should work if Ollama is running
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires Ollama server and model - run manually"]
+    async fn test_generate_ollama_response_integration() {
+        let result = generate_ollama_response(
+            "llama2".to_string(),
+            "Say 'hello' and nothing else.".to_string(),
+        ).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(response.to_lowercase().contains("hello"));
+    }
+}
