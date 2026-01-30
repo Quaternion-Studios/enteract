@@ -1,0 +1,7 @@
+{
+  "clear_speech": "The quick brown fox jumps over the lazy dog. This is a test of clear speech recognition with normal pacing and pronunciation.",
+  "technical_jargon": "The API endpoint uses OAuth 2.0 authentication with JWT tokens. Configure the Kubernetes deployment using kubectl apply with the YAML manifest.",
+  "fast_speech": "I need to quickly explain that we're running out of time and the deadline is approaching rapidly so we must hurry.",
+  "noisy_background": "Please listen carefully. I'm speaking with background noise. Can you understand what I'm saying?",
+  "numbers_dates": "The meeting is scheduled for January 15th, 2025 at 3:30 PM. The total cost is $1,234.56 for 42 items."
+}
