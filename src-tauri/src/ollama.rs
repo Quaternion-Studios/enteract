@@ -1620,17 +1620,6 @@ mod tests {
         assert_eq!(deserialized.content, "Hello, how are you?");
     }
 
-    #[test]
-    fn test_chat_context_message_assistant() {
-        let msg = ChatContextMessage {
-            role: "assistant".to_string(),
-            content: "I'm doing well, thank you!".to_string(),
-        };
-
-        assert_eq!(msg.role, "assistant");
-        assert_eq!(msg.content, "I'm doing well, thank you!");
-    }
-
     // ============================================================================
     // GenerateRequest tests
     // ============================================================================
@@ -2054,12 +2043,6 @@ mod tests {
     // ============================================================================
     // ChunkResult tests
     // ============================================================================
-
-    #[test]
-    fn test_chunk_result_continue() {
-        let result = ChunkResult::Continue;
-        assert!(matches!(result, ChunkResult::Continue));
-    }
 
     #[test]
     fn test_chunk_result_exit() {

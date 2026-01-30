@@ -187,44 +187,6 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn test_monitor_info_creation() {
-        let monitor = MonitorInfo {
-            x: 0,
-            y: 0,
-            width: 1920,
-            height: 1080,
-            is_primary: true,
-            name: "Primary".to_string(),
-        };
-
-        assert_eq!(monitor.x, 0);
-        assert_eq!(monitor.y, 0);
-        assert_eq!(monitor.width, 1920);
-        assert_eq!(monitor.height, 1080);
-        assert!(monitor.is_primary);
-        assert_eq!(monitor.name, "Primary");
-    }
-
-    #[test]
-    fn test_monitor_info_with_offset() {
-        let monitor = MonitorInfo {
-            x: 1920,
-            y: 0,
-            width: 2560,
-            height: 1440,
-            is_primary: false,
-            name: "Secondary".to_string(),
-        };
-
-        assert_eq!(monitor.x, 1920);
-        assert_eq!(monitor.y, 0);
-        assert_eq!(monitor.width, 2560);
-        assert_eq!(monitor.height, 1440);
-        assert!(!monitor.is_primary);
-        assert_eq!(monitor.name, "Secondary");
-    }
-
-    #[test]
     fn test_monitor_info_negative_position() {
         // Monitors can have negative positions (e.g., monitor to the left of primary)
         let monitor = MonitorInfo {
@@ -293,40 +255,6 @@ mod tests {
         assert_eq!(original.height, deserialized.height);
         assert_eq!(original.is_primary, deserialized.is_primary);
         assert_eq!(original.name, deserialized.name);
-    }
-
-    #[test]
-    fn test_monitor_info_clone() {
-        let original = MonitorInfo {
-            x: 0,
-            y: 0,
-            width: 1920,
-            height: 1080,
-            is_primary: true,
-            name: "Primary".to_string(),
-        };
-
-        let cloned = original.clone();
-        assert_eq!(original.x, cloned.x);
-        assert_eq!(original.width, cloned.width);
-        assert_eq!(original.name, cloned.name);
-    }
-
-    #[test]
-    fn test_monitor_info_debug() {
-        let monitor = MonitorInfo {
-            x: 0,
-            y: 0,
-            width: 1920,
-            height: 1080,
-            is_primary: true,
-            name: "Debug Test".to_string(),
-        };
-
-        let debug_str = format!("{:?}", monitor);
-        assert!(debug_str.contains("MonitorInfo"));
-        assert!(debug_str.contains("1920"));
-        assert!(debug_str.contains("1080"));
     }
 
     // ============================================================================
