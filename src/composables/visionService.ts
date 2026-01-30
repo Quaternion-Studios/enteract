@@ -1,7 +1,7 @@
 // visionService.ts - Handles screenshot analysis and vision capabilities
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { ScreenshotResponse } from '../types/chat'
+import type { ScreenshotResponse } from '../types'
 import { SessionManager } from './sessionManager'
 
 let messageIdCounter = 1

@@ -1,5 +1,5 @@
 // index.ts - Export all modules for easy importing
-export * from '../types/chat'
+export * from '../types'
 export * from './sharedState'
 export * from './storageService'
 export * from './contextManager'

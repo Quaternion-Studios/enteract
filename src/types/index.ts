@@ -54,6 +54,20 @@ export interface LoadChatsResponse {
   chats: ChatSession[]
 }
 
+export interface ScreenshotResponse {
+  image_base64: string
+  width: number
+  height: number
+}
+
+export interface StreamEvent {
+  type: 'start' | 'chunk' | 'error' | 'complete'
+  text?: string
+  model?: string
+  error?: string
+  done?: boolean
+}
+
 export interface MessageAttachment {
   id: string
   type: 'image' | 'document' | 'audio' | 'video'

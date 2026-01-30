@@ -1,5 +1,5 @@
 // contextManager.ts - Handles context truncation and token estimation
-import type { ChatMessage } from '../types/chat'
+import type { ChatMessage } from '../types'
 
 export class ContextManager {
   // Token estimation utility (~4 characters per token heuristic)

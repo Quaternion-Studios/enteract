@@ -1,7 +1,7 @@
 // sessionManager.ts - Handles chat session operations
 import { v4 as uuidv4 } from 'uuid'
 import { computed } from 'vue'
-import type { ChatSession, ChatMessage } from '../types/chat'
+import type { ChatSession, ChatMessage } from '../types'
 import { sharedChatState } from './sharedState'
 import { StorageService } from './storageService'
 

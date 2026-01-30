@@ -2,10 +2,10 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { DocumentTextIcon, FolderIcon, MagnifyingGlassIcon, XMarkIcon, CloudArrowUpIcon } from '@heroicons/vue/24/outline'
 import { CheckCircleIcon } from '@heroicons/vue/24/solid'
-import type { Document } from '../../services/ragService'
+import type { EnhancedDocument } from '../../services/enhancedRagService'
 
 interface Props {
-  documents: Document[]
+  documents: EnhancedDocument[]
   selectedDocumentIds: Set<string>
   maxSelections?: number
   show: boolean
@@ -67,7 +67,7 @@ watch(() => props.searchQuery, (newQuery) => {
 })
 
 // Methods
-const toggleDocument = (document: Document) => {
+const toggleDocument = (document: EnhancedDocument) => {
   if (props.selectedDocumentIds.has(document.id)) {
     emit('deselect', document.id)
   } else if (canSelectMore.value) {
@@ -75,7 +75,7 @@ const toggleDocument = (document: Document) => {
   }
 }
 
-const insertReference = (document: Document) => {
+const insertReference = (document: EnhancedDocument) => {
   emit('insertReference', document.file_name)
   emit('close')
 }

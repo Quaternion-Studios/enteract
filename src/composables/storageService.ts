@@ -1,6 +1,6 @@
 // storageService.ts - Handles chat persistence with enhanced reliability
 import { invoke } from '@tauri-apps/api/core'
-import type { ChatSession, SaveChatsPayload, LoadChatsResponse } from '../types/chat'
+import type { ChatSession, SaveChatsPayload, LoadChatsResponse } from '../types'
 
 export class StorageService {
   private static readonly MAX_RETRIES = 3
